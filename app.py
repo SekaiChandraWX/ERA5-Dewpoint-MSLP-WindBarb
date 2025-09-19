@@ -134,7 +134,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         cs = ax.contour(lon, lat, mslp[0, :, :], levels=np.arange(950, 1050, 2), colors='black', linewidths=1)
         
         # Plot 2m dewpoint temperature with custom colormap
-        levels = np.linspace(-40, 90, len(cmap.colors))
+        levels = np.linspace(-40, 90, 256)  # Use 256 levels for smooth colormap
         cf = ax.contourf(lon, lat, dewpoint[0, :, :], cmap=cmap, levels=levels, extend='both')
         
         # Plot 10m wind barbs
