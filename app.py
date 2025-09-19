@@ -166,9 +166,12 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 # Streamlit UI
 st.title("ERA5 Weather Visualization")
 
-# API Key input
-api_key = st.text_input("Enter your CDS API Key:", type="password", 
-                       help="Get your key from https://cds.climate.copernicus.eu/api-how-to")
+# Get API key from secrets
+try:
+    api_key = st.secrets["CDS_API_KEY"]
+except KeyError:
+    st.error("CDS API key not found in secrets. Please configure your API key.")
+    st.stop()
 
 # Date and time inputs
 col1, col2, col3, col4 = st.columns(4)
@@ -203,28 +206,25 @@ with col6:
 
 # Generate visualization when button is clicked
 if generate_button:
-    if not api_key:
-        st.error("Please enter your CDS API key to proceed.")
-    else:
-        # Parse selected region
-        category, region_name = selected_region.split(": ", 1)
-        region_coords = REGIONS[category][region_name]
+    # Parse selected region
+    category, region_name = selected_region.split(": ", 1)
+    region_coords = REGIONS[category][region_name]
+    
+    try:
+        with st.spinner("Downloading ERA5 data and generating visualization..."):
+            image_buffer = generate_visualization(year, month, day, hour, region_coords, api_key)
+            
+        st.success("Visualization generated successfully!")
+        st.image(image_buffer, caption=f"ERA5 Weather Data for {year}-{month:02d}-{day:02d} {hour:02d}:00 UTC")
         
-        try:
-            with st.spinner("Downloading ERA5 data and generating visualization..."):
-                image_buffer = generate_visualization(year, month, day, hour, region_coords, api_key)
-                
-            st.success("Visualization generated successfully!")
-            st.image(image_buffer, caption=f"ERA5 Weather Data for {year}-{month:02d}-{day:02d} {hour:02d}:00 UTC")
-            
-            # Download button
-            st.download_button(
-                label="Download Image",
-                data=image_buffer,
-                file_name=f"ERA5_{year}{month:02d}{day:02d}{hour:02d}_{region_name.replace(' ', '_')}.png",
-                mime="image/png"
-            )
-            
-        except Exception as e:
-            st.error(f"Error generating visualization: {str(e)}")
-            st.info("Make sure your API key is correct and the date/time is valid.")
+        # Download button
+        st.download_button(
+            label="Download Image",
+            data=image_buffer,
+            file_name=f"ERA5_{year}{month:02d}{day:02d}{hour:02d}_{region_name.replace(' ', '_')}.png",
+            mime="image/png"
+        )
+        
+    except Exception as e:
+        st.error(f"Error generating visualization: {str(e)}")
+        st.info("Make sure the date/time is valid and the API service is available.")
