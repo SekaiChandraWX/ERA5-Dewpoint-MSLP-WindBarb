@@ -6,15 +6,16 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.util import add_cyclic_point
 import os
 import tempfile
 from datetime import datetime
 import io
 
-# Page configuration
+# -------------------- Streamlit page --------------------
 st.set_page_config(page_title="ERA5 Weather Visualization", layout="wide")
 
-# Region coordinates dictionary (values can be outside [-180, 180]; we normalize)
+# Region coordinates dictionary (values can be outside [-180, 180]; we normalize for viewing)
 REGIONS = {
     "General": {
         "Continental United States": [-125, -66.5, 24.396308, 49.384358],
@@ -40,6 +41,7 @@ REGIONS = {
     }
 }
 
+# -------------------- Color map --------------------
 def create_custom_colormap():
     """Custom colormap for dewpoint temperature."""
     colors = [(152, 109, 77), (150, 108, 76), (148, 107, 76), (146, 106, 75), (144, 105, 75), (142, 104, 74),
@@ -66,54 +68,45 @@ def create_custom_colormap():
     norm_colors = [(r/255, g/255, b/255) for r, g, b in colors]
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
-# -------------------- Geo helpers --------------------
+# -------------------- Geo helpers (IDL-safe) --------------------
+def to_pm180(lon):
+    """Map longitude to (-180, 180]; keep exact -180 at +180 for cleaner west<east logic."""
+    x = (lon + 180.0) % 360.0 - 180.0
+    return 180.0 if np.isclose(x, -180.0) else x
 
-def normalize_extent(ext):
+def extent_for_central180(ext):
     """
-    Normalize [lon_min, lon_max, lat_min, lat_max] to lon in [-180, 180).
-    Works even if the input longitudes are outside that range.
+    Convert [lon_w, lon_e, lat_s, lat_n] (any range; may cross IDL) into an extent
+    suitable for PlateCarree(central_longitude=180) where west < east.
+    If the box crosses the IDL, we let east exceed +180 by adding 360.
     """
-    lon0, lon1, lat0, lat1 = ext
-    def norm_lon(x):
-        return ((x + 180) % 360) - 180
-    return [norm_lon(lon0), norm_lon(lon1), lat0, lat1]
-
-def crosses_dateline(ext_norm):
-    """True if the normalized extent crosses the dateline (i.e., west > east)."""
-    lon0, lon1, _, _ = ext_norm
-    return lon0 > lon1
-
-def to_lon360(x):
-    """Map longitude to [0, 360)."""
-    return x if x >= 0 else x + 360
-
-def extent_to_lon360(ext_norm):
-    """
-    Convert normalized extent to a [0,360) extent with west < east,
-    suitable for dateline-crossing windows like [170, 200].
-    """
-    lon0, lon1, lat0, lat1 = ext_norm
-    w = to_lon360(lon0)
-    e = to_lon360(lon1)
+    lon_w, lon_e, lat_s, lat_n = ext
+    w = to_pm180(lon_w)
+    e = to_pm180(lon_e)
+    if lat_s > lat_n:
+        lat_s, lat_n = lat_n, lat_s
     if e <= w:
         e += 360.0
-    return [w, e, lat0, lat1]
+    return [w, e, lat_s, lat_n]
 
-# -------------------- Auto-thinning (softer, denser isobars) --------------------
+def span_from_extent180(ext180):
+    """
+    Compute longitudinal span (deg) from an extent defined for central_longitude=180.
+    Handles IDL-crossing windows where east may be > 180.
+    """
+    w, e, _, _ = ext180
+    return (e - w) if e >= w else (e + 360.0 - w)
 
-def auto_plot_params(normed_extent, nx, ny):
+# -------------------- Auto-thinning (softer + denser isobars) --------------------
+def auto_plot_params(ext180, nx, ny):
     """
-    Softer thinning: keep more detail at all scales.
-    Returns dict with barb/line density and isobar spacing.
+    Softer thinning to keep more detail, with denser isobars.
+    ext180 is in the PlateCarree(central_longitude=180) frame.
     """
-    lon0, lon1, lat0, lat1 = normed_extent
-    lon_span = (lon1 - lon0) % 360.0
-    if lon_span > 180:
-        lon_span = 360 - lon_span
-    lat_span = abs(lat1 - lat0)
+    lon_span = span_from_extent180(ext180)
+    lat_span = abs(ext180[3] - ext180[2])
     span = max(lon_span, lat_span)
 
-    # Denser isobars than before
     if span >= 120:         # basin/hemisphere
         desired_x = 40
         barb_len  = 5
@@ -121,7 +114,7 @@ def auto_plot_params(normed_extent, nx, ny):
         coast_lw  = 0.9
         border_lw = 0.7
         state_lw  = 0.5
-        cint      = 3       # was 4 -> denser
+        cint      = 2
     elif span >= 60:        # sub-basin / multi-country
         desired_x = 55
         barb_len  = 6
@@ -129,7 +122,7 @@ def auto_plot_params(normed_extent, nx, ny):
         coast_lw  = 1.0
         border_lw = 0.8
         state_lw  = 0.6
-        cint      = 2       # was 3 -> denser
+        cint      = 2
     elif span >= 30:        # large region
         desired_x = 70
         barb_len  = 6
@@ -163,32 +156,26 @@ def auto_plot_params(normed_extent, nx, ny):
         'cint': cint
     }
 
-# -------------------- Time label helper --------------------
-
+# -------------------- Time helper --------------------
 def read_valid_time(ds):
-    """Read a nice datetime string from ERA5 single-level netCDF."""
     var = ds.variables.get('valid_time') or ds.variables.get('time')
     if var is None:
         return "Unknown valid time"
     time_unit = getattr(var, 'units', None)
     time_calendar = getattr(var, 'calendar', 'standard')
-    tvals = var[:]
     try:
-        date = nc.num2date(tvals[0], units=time_unit, calendar=time_calendar)
+        date = nc.num2date(var[:][0], units=time_unit, calendar=time_calendar)
         return date.strftime("%B %d, %Y - %H:%M UTC")
     except Exception:
         return "Unknown valid time"
 
 # -------------------- Main renderer --------------------
-
 def generate_visualization(year, month, day, hour, region_coords, api_key):
     """Generate the ERA5 visualization."""
     date_input = f"{year:04}{month:02}{day:02}{hour:02}"
 
-    # Configure CDS API
+    # CDS API
     c = cdsapi.Client(url='https://cds.climate.copernicus.eu/api', key=api_key)
-
-    # ERA5 single-level request
     dataset = "reanalysis-era5-single-levels"
     request = {
         "product_type": "reanalysis",
@@ -203,155 +190,116 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         "format": "netcdf"
     }
 
-    # Temp file for download
+    # temp file
     with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp_file:
         target = tmp_file.name
 
     try:
-        # Retrieve data
+        # retrieve & read
         c.retrieve(dataset, request, target)
-
-        # Load netCDF
         ds = nc.Dataset(target)
 
-        # Variables
+        # variables (ERA5 longitudes usually 0..360, latitude descending)
         mslp = ds.variables['msl'][:] / 100.0  # hPa
         d2m  = ds.variables['d2m'][:]          # K
         u10  = ds.variables['u10'][:]
         v10  = ds.variables['v10'][:]
-        lon0_360 = ds.variables['longitude'][:]   # typically 0..360
-        lat = ds.variables['latitude'][:]        # often descending
+        lon0 = ds.variables['longitude'][:]
+        lat  = ds.variables['latitude'][:]
 
-        # Time label
+        # sort longitude strictly increasing in 0..360
+        lon_360 = np.asarray(lon0)
+        order = np.argsort(lon_360)
+        lon_360 = lon_360[order]
+        mslp = mslp[:, :, order]
+        d2m  = d2m[:,  :, order]
+        u10  = u10[:,  :, order]
+        v10  = v10[:,  :, order]
+
+        # convert dewpoint to °F
+        dewpoint_f = (d2m - 273.15) * 9/5 + 32
+
+        # build extent for a dateline-centered view
+        extent180 = extent_for_central180(region_coords)
+
+        # colormap and title time
+        cmap = create_custom_colormap()
         date_str = read_valid_time(ds)
 
-        # Build both longitude domains:
-        #  - lon_360 increasing in [0,360)
-        lon_360 = lon0_360.copy()
-        order_360 = np.argsort(lon_360)
-        lon_360 = lon_360[order_360]
-        mslp_360 = mslp[:, :, order_360]
-        d2m_360  = d2m[:, :, order_360]
-        u10_360  = u10[:, :, order_360]
-        v10_360  = v10[:, :, order_360]
+        # ---- Projection setup (IDL-safe) ----
+        proj = ccrs.PlateCarree(central_longitude=180)
+        extent_crs = ccrs.PlateCarree(central_longitude=180)
+        data_crs = ccrs.PlateCarree()  # data are in geographic lon/lat with lon in 0..360
 
-        #  - lon_m180 increasing in [-180,180)
-        lon_m180 = np.where(lon_360 > 180, lon_360 - 360, lon_360)
-        order_m180 = np.argsort(lon_m180)
-        lon_m180 = lon_m180[order_m180]
-        mslp_m180 = mslp_360[:, :, order_m180]
-        d2m_m180  = d2m_360[:, :, order_m180]
-        u10_m180  = u10_360[:, :, order_m180]
-        v10_m180  = v10_360[:, :, order_m180]
-
-        # Normalize requested region
-        normed_extent = normalize_extent(region_coords)
-        is_crossing = crosses_dateline(normed_extent)
-
-        # Choose which longitude domain to use
-        if is_crossing:
-            # Use lon in 0..360 and an extent like [170, 200]
-            plot_lon = lon_360
-            plot_mslp = mslp_360
-            plot_d2m  = d2m_360
-            plot_u10  = u10_360
-            plot_v10  = v10_360
-            extent_360 = extent_to_lon360(normed_extent)  # [w,e,lat0,lat1] with w<e in 0..360
-            proj = ccrs.PlateCarree()                     # keep default projection
-            extent_crs = ccrs.PlateCarree()               # and default data CRS
-            west, east, lat0, lat1 = extent_360
-            # Matplotlib/Cartopy are fine with extents >180 here (e.g., [170, 200])
-            set_extent = [west, east, lat0, lat1]
-            data_crs = ccrs.PlateCarree()                 # data longitudes are 0..360
-        else:
-            # Use lon in [-180,180) and a standard extent
-            plot_lon = lon_m180
-            plot_mslp = mslp_m180
-            plot_d2m  = d2m_m180
-            plot_u10  = u10_m180
-            plot_v10  = v10_m180
-            proj = ccrs.PlateCarree()
-            extent_crs = ccrs.PlateCarree()
-            set_extent = normed_extent
-            data_crs = ccrs.PlateCarree()
-
-        # Convert dewpoint to °F
-        dewpoint_f = (plot_d2m - 273.15) * 9/5 + 32
-
-        # Colormap
-        cmap = create_custom_colormap()
-
-        # Figure/Axes
+        # figure/axes
         fig, ax = plt.subplots(figsize=(18, 9), subplot_kw={'projection': proj})
-        ax.set_extent(set_extent, crs=extent_crs)
+        ax.set_extent(extent180, crs=extent_crs)
 
-        # Auto-thinning + denser isobars
-        params = auto_plot_params(normed_extent, nx=plot_lon.size, ny=lat.size)
+        # auto-thin based on extent/grid
+        params = auto_plot_params(extent180, nx=lon_360.size, ny=lat.size)
 
-        # Map features
+        # map features
         ax.set_facecolor('#C0C0C0')
         ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
-        ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
+        try:
+            ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
+        except Exception:
+            # STATES layer may not be available in all environments; ignore quietly
+            pass
 
-        # 2D coords for barbs
-        LON2, LAT2 = np.meshgrid(plot_lon, lat)
+        # 2D grid for barbs
+        LON2, LAT2 = np.meshgrid(lon_360, lat)
 
-        # Isobars (denser)
-        mslp0 = plot_mslp[0, :, :]
+        # isobars (denser, with guard on total level count)
+        mslp0 = mslp[0, :, :]
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
         mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
-        # guard rails: avoid >80 levels which can be slow on some hosts
-        max_levels = 60
         levels = np.arange(mmin, mmax + cint, cint)
-        if levels.size > max_levels:
-            skip = int(np.ceil(levels.size / max_levels))
+        if levels.size > 60:
+            skip = int(np.ceil(levels.size / 60))
             levels = levels[::skip]
 
-        cs = ax.contour(
-            plot_lon, lat, mslp0,
-            levels=levels,
-            colors='black',
+        ax.contour(
+            lon_360, lat, mslp0,
+            levels=levels, colors='black',
             linewidths=params['mslp_lw'],
             transform=data_crs
         )
 
-        # Filled dewpoint
-        dp_levels = np.linspace(-40, 90, 256)
+        # filled dewpoint (add cyclic column to avoid a seam at 180°)
+        dp_slice = dewpoint_f[0, :, :]
+        dp_cyc, lon_cyc = add_cyclic_point(dp_slice, coord=lon_360)
         cf = ax.contourf(
-            plot_lon, lat, dewpoint_f[0, :, :],
-            levels=dp_levels, cmap=cmap, extend='both',
+            lon_cyc, lat, dp_cyc,
+            levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
             transform=data_crs
         )
 
-        # Wind barbs (thinned)
+        # wind barbs
         si = params['stride_y']
         sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
-            plot_u10[0, ::si, ::sj], plot_v10[0, ::si, ::sj],
+            u10[0, ::si, ::sj], v10[0, ::si, ::sj],
             length=params['barb_len'],
             transform=data_crs
         )
 
-        # Colorbar
+        # colorbar and title
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.7)
         cb.set_label('2m Dewpoint Temperature (°F)')
-
-        # Title
-        date_str = read_valid_time(ds)
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
-        # Save to buffer
+        # save to buffer
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
 
-        # Cleanup
+        # cleanup figures and dataset
         ds.close()
         plt.close(fig)
-
         return buffer
 
     finally:
@@ -359,7 +307,6 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             os.remove(target)
 
 # -------------------- Streamlit UI --------------------
-
 st.title("ERA5 Weather Visualization")
 
 # Get API key from secrets
@@ -369,7 +316,7 @@ except KeyError:
     st.error("CDS API key not found in secrets. Please configure your API key.")
     st.stop()
 
-# Date/time inputs
+# inputs
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     year = st.number_input("Year", min_value=1940, max_value=datetime.now().year, value=2023)
@@ -380,7 +327,7 @@ with col3:
 with col4:
     hour = st.number_input("Hour", min_value=0, max_value=23, value=12)
 
-# Region & generate
+# region + button
 col5, col6 = st.columns(2)
 with col5:
     region_options = []
@@ -389,16 +336,15 @@ with col5:
             region_options.append(f"{category}: {region_name}")
     selected_region = st.selectbox("Select Region", region_options)
 with col6:
-    generate_button = st.button("Generate", type="primary",
-                                help="Generate the ERA5 visualization")
+    generate_button = st.button("Generate", type="primary", help="Generate the ERA5 visualization")
 
+# run
 if generate_button:
     category, region_name = selected_region.split(": ", 1)
     region_coords = REGIONS[category][region_name]
     try:
         with st.spinner("Downloading ERA5 data and generating visualization..."):
             image_buffer = generate_visualization(year, month, day, hour, region_coords, api_key)
-
         st.success("Visualization generated successfully!")
         st.image(image_buffer, caption=f"ERA5 Weather Data for {year}-{month:02d}-{day:02d} {hour:02d}:00 UTC")
         st.download_button(
