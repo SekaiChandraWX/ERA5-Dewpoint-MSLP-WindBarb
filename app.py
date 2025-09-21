@@ -18,7 +18,6 @@ st.set_page_config(page_title="ERA5 Weather Visualization", layout="wide")
 REGIONS = {
     "General": {
         "Continental United States": [-125, -66.5, 24.396308, 49.384358],
-        "North Atlantic Basin": [-102.8, -7.9, 6, 57.6],
         "Europe": [-12.2, 49.4, 26.6, 74.3],
         "Middle East and South Asia": [27.9, 102.3, 1.8, 67.5],
         "East and Southeast Asia": [86.4, 160.8, -14.7, 50.9],
@@ -31,6 +30,7 @@ REGIONS = {
         "Mexico and Central America": [-119, -56.1, 3.3, 35.7]
     },
     "Tropics": {
+        "North Atlantic Basin": [-102.8, -7.9, 6, 57.6],
         "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],       # crosses dateline
         "East Pacific Basin": [-161.4, -86.3, 3, 39],
         "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],   # crosses dateline
