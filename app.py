@@ -93,38 +93,44 @@ def extent_span_deg(normed_extent):
 
 def auto_plot_params(normed_extent, nx, ny):
     """
-    Decide barb density, barb length, isobar interval, and line widths
-    based on the map span + grid size. Returns a dict:
+    Softer thinning: keep more detail at all scales.
+    Returns:
       { 'stride_y', 'stride_x', 'barb_len', 'mslp_lw', 'coast_lw', 'border_lw', 'state_lw', 'cint' }
     """
-    _, _, span = extent_span_deg(normed_extent)
+    # compute span
+    lon0, lon1, lat0, lat1 = normed_extent
+    lon_span = (lon1 - lon0) % 360.0
+    if lon_span > 180:
+        lon_span = 360 - lon_span
+    lat_span = abs(lat1 - lat0)
+    span = max(lon_span, lat_span)
 
-    if span >= 120:         # basin/hemisphere scale
-        desired_x = 25
-        barb_len  = 4
-        mslp_lw   = 0.6
-        coast_lw  = 0.7
-        border_lw = 0.5
-        state_lw  = 0.4
-        cint      = 4       # 4 hPa spacing cleans up clutter
-    elif span >= 60:        # sub-basin / multi-country
-        desired_x = 35
-        barb_len  = 5
-        mslp_lw   = 0.8
+    if span >= 120:         # basin/hemisphere
+        desired_x = 40      # was 25 (=> denser now)
+        barb_len  = 5       # was 4
+        mslp_lw   = 0.8     # was 0.6
         coast_lw  = 0.8
         border_lw = 0.6
         state_lw  = 0.4
-        cint      = 3
-    elif span >= 30:        # large country / region
-        desired_x = 45
-        barb_len  = 6
-        mslp_lw   = 1.0
+        cint      = 4       # keep 4 hPa to control clutter
+    elif span >= 60:        # sub-basin / multi-country
+        desired_x = 55      # was 35
+        barb_len  = 6       # was 5
+        mslp_lw   = 0.9     # was 0.8
         coast_lw  = 0.9
         border_lw = 0.7
         state_lw  = 0.5
+        cint      = 3
+    elif span >= 30:        # large country / region
+        desired_x = 70      # was 45
+        barb_len  = 6
+        mslp_lw   = 1.1     # was 1.0
+        coast_lw  = 1.0
+        border_lw = 0.8
+        state_lw  = 0.6
         cint      = 2
-    else:                   # zoomed-in (CONUS-sized or smaller)
-        desired_x = 55
+    else:                   # zoomed-in
+        desired_x = 85      # was 55
         barb_len  = 7
         mslp_lw   = 1.2
         coast_lw  = 1.0
@@ -134,7 +140,12 @@ def auto_plot_params(normed_extent, nx, ny):
 
     # convert desired_x to strides using available grid size
     stride_x = max(1, nx // desired_x)
-    stride_y = max(1, ny // int(desired_x / 1.6))  # keep a bit taller spacing N/S
+    stride_y = max(1, ny // int(desired_x / 1.6))
+
+    # safety: never thin beyond every 8th gridpoint unless span is truly global
+    stride_x = min(stride_x, 8 if span < 150 else 12)
+    stride_y = min(stride_y, 8 if span < 150 else 12)
+
     return {
         'stride_y': stride_y,
         'stride_x': stride_x,
@@ -145,6 +156,7 @@ def auto_plot_params(normed_extent, nx, ny):
         'state_lw': state_lw,
         'cint': cint
     }
+
 
 def read_valid_time(ds):
     """
