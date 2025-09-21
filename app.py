@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.util import add_cyclic_point
 import os
 import tempfile
 from datetime import datetime
@@ -88,59 +89,55 @@ def extent_for_central180(ext):
         e += 360.0
     return [w, e, lat_s, lat_n]
 
-def subset_unwrap_lon(lon360, ext180):
-    """
-    Given longitudes in [0,360) and an extent in the central_longitude=180 frame,
-    unwrap longitudes into that frame so the selected window is contiguous & sorted.
-    Returns (indices, lon_plot) where lon_plot is in the 180-centered frame and may exceed 180.
-    """
-    w, e, _, _ = ext180
-    lon_c180 = ((lon360 + 180.0) % 360.0) - 180.0            # (-180, 180]
-    lon_unwrap = np.where(lon_c180 < w, lon_c180 + 360.0, lon_c180)
-    mask = (lon_unwrap >= w) & (lon_unwrap <= e)
-    inds = np.where(mask)[0]
-    order = np.argsort(lon_unwrap[inds])                     # ensure strictly increasing
-    inds = inds[order]
-    lon_plot = lon_unwrap[inds]
-    return inds, lon_plot
-
-def subset_lat(lat, ext180):
-    """Indices selecting latitudes within [s,n] regardless of array order."""
-    _, _, s, n = ext180
-    lo, hi = min(s, n), max(s, n)
-    if lat[0] < lat[-1]:
-        mask = (lat >= lo) & (lat <= hi)
-    else:
-        mask = (lat <= hi) & (lat >= lo)
-    return np.where(mask)[0]
-
-# -------------------- Auto-thinning (softer + denser isobars) --------------------
 def span_from_extent180(ext180):
+    """Longitudinal span for extents in central_longitude=180 frame."""
     w, e, _, _ = ext180
     return (e - w) if e >= w else (e + 360.0 - w)
 
+def lon360_in_extent180_mask(lon360, ext180):
+    """
+    Mask longitudes in [0,360) that fall inside an extent defined for
+    PlateCarree(central_longitude=180). Handles IDL crossing by unwrapping.
+    """
+    w, e, _, _ = ext180
+    # Map lon360 to (-180, 180]
+    lon_c180 = ((lon360 + 180.0) % 360.0) - 180.0
+    # If e>180 we "unwrap" by adding 360 to values < w so the interval is [w, e] in a monotone axis
+    if e > 180.0:
+        lon_unwrapped = np.where(lon_c180 < w, lon_c180 + 360.0, lon_c180)
+    else:
+        lon_unwrapped = lon_c180
+    return (lon_unwrapped >= w) & (lon_unwrapped <= e)
+
+def lat_mask_for_extent(lat, ext180):
+    """Mask latitude array (which may be descending) to [lat_s, lat_n]."""
+    _, _, s, n = ext180
+    lo, hi = min(s, n), max(s, n)
+    return (lat >= lo) & (lat <= hi) if lat[0] < lat[-1] else (lat <= hi) & (lat >= lo)
+
+# -------------------- Auto-thinning (softer + denser isobars) --------------------
 def auto_plot_params(ext180, nx, ny):
     lon_span = span_from_extent180(ext180)
     lat_span = abs(ext180[3] - ext180[2])
     span = max(lon_span, lat_span)
 
-    if span >= 120:
-        desired_x, barb_len, mslp_lw, coast_lw, border_lw, state_lw, cint = 40, 5, 0.9, 0.9, 0.7, 0.5, 2
-    elif span >= 60:
-        desired_x, barb_len, mslp_lw, coast_lw, border_lw, state_lw, cint = 55, 6, 1.0, 1.0, 0.8, 0.6, 2
-    elif span >= 30:
-        desired_x, barb_len, mslp_lw, coast_lw, border_lw, state_lw, cint = 70, 6, 1.1, 1.0, 0.8, 0.6, 2
-    else:
-        desired_x, barb_len, mslp_lw, coast_lw, border_lw, state_lw, cint = 85, 7, 1.2, 1.0, 0.8, 0.6, 2
+    if span >= 120:         # basin/hemisphere
+        desired_x = 40; barb_len = 5;  mslp_lw = 0.9; coast_lw = 0.9; border_lw = 0.7; state_lw = 0.5; cint = 2
+    elif span >= 60:        # sub-basin
+        desired_x = 55; barb_len = 6;  mslp_lw = 1.0; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
+    elif span >= 30:        # large region
+        desired_x = 70; barb_len = 6;  mslp_lw = 1.1; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
+    else:                   # zoomed-in
+        desired_x = 85; barb_len = 7;  mslp_lw = 1.2; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
 
-    stride_x = min(max(1, nx // desired_x), 8 if span < 150 else 12)
-    stride_y = min(max(1, ny // int(desired_x / 1.6)), 8 if span < 150 else 12)
+    stride_x = max(1, nx // desired_x)
+    stride_y = max(1, ny // int(desired_x / 1.6))
+    stride_x = min(stride_x, 8 if span < 150 else 12)
+    stride_y = min(stride_y, 8 if span < 150 else 12)
 
-    return {
-        'stride_y': stride_y, 'stride_x': stride_x, 'barb_len': barb_len,
-        'mslp_lw': mslp_lw, 'coast_lw': coast_lw, 'border_lw': border_lw,
-        'state_lw': state_lw, 'cint': cint
-    }
+    return {'stride_y': stride_y, 'stride_x': stride_x, 'barb_len': barb_len,
+            'mslp_lw': mslp_lw, 'coast_lw': coast_lw, 'border_lw': border_lw,
+            'state_lw': state_lw, 'cint': cint}
 
 # -------------------- Time helper --------------------
 def read_valid_time(ds):
@@ -202,16 +199,22 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         u10  = u10[:,  :, order]
         v10  = v10[:,  :, order]
 
-        # ---- Dateline-centered extent & subsetting ----
+        # build extent for a dateline-centered view
         extent180 = extent_for_central180(region_coords)
-        j_lat = subset_lat(lat, extent180)
-        i_lon, lon_plot = subset_unwrap_lon(lon_360, extent180)   # lon_plot is in central_longitude=180 frame
 
-        lat_sub = lat[j_lat]
-        mslp_sub = mslp[:, j_lat, :][:, :, i_lon]
-        d2m_sub  = d2m[:,  j_lat, :][:, :, i_lon]
-        u10_sub  = u10[:,  j_lat, :][:, :, i_lon]
-        v10_sub  = v10[:,  j_lat, :][:, :, i_lon]
+        # ---- SUBSET THE GRID TO THE VIEW WINDOW (fixes clutter & aspect) ----
+        # longitude mask
+        mask_lon = lon360_in_extent180_mask(lon_360, extent180)
+        # latitude mask
+        mask_lat = lat_mask_for_extent(lat, extent180)
+
+        lon_sub = lon_360[mask_lon]
+        lat_sub = lat[mask_lat]
+
+        mslp_sub = mslp[:, mask_lat, :][:, :, mask_lon]
+        d2m_sub  = d2m[:,  mask_lat, :][:, :, mask_lon]
+        u10_sub  = u10[:,  mask_lat, :][:, :, mask_lon]
+        v10_sub  = v10[:,  mask_lat, :][:, :, mask_lon]
 
         # convert dewpoint to °F
         dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
@@ -223,14 +226,14 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         # ---- Projection setup (IDL-safe) ----
         proj = ccrs.PlateCarree(central_longitude=180)
         extent_crs = ccrs.PlateCarree(central_longitude=180)
-        data_crs = ccrs.PlateCarree(central_longitude=180)   # our lon_plot lives in this frame
+        data_crs = ccrs.PlateCarree()  # data are in geographic lon/lat with lon in 0..360
 
         # figure/axes
-        fig, ax = plt.subplots(figsize=(16, 9), subplot_kw={'projection': proj})
+        fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
         ax.set_extent(extent180, crs=extent_crs)
 
-        # auto-thin based on subset size
-        params = auto_plot_params(extent180, nx=lon_plot.size, ny=lat_sub.size)
+        # auto-thin based on **subset** size (not global)
+        params = auto_plot_params(extent180, nx=lon_sub.size, ny=lat_sub.size)
 
         # map features
         ax.set_facecolor('#C0C0C0')
@@ -239,10 +242,10 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         try:
             ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
         except Exception:
-            pass  # STATES not available in all environments
+            pass
 
         # 2D grid for barbs
-        LON2, LAT2 = np.meshgrid(lon_plot, lat_sub)
+        LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
 
         # isobars (denser, with guard on total level count)
         mslp0 = mslp_sub[0, :, :]
@@ -255,20 +258,29 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             levels = levels[::skip]
 
         ax.contour(
-            lon_plot, lat_sub, mslp0,
+            lon_sub, lat_sub, mslp0,
             levels=levels, colors='black',
             linewidths=params['mslp_lw'],
             transform=data_crs
         )
 
-        # filled dewpoint (subset is contiguous; no cyclic column needed)
+        # filled dewpoint (add cyclic column only if the subset still touches the seam)
+        lon_for_fill = lon_sub
+        dp_slice = dewpoint_f[0, :, :]
+        # Determine if subset spans 0/360 seam in lon_360
+        spans_seam = (np.max(np.diff(np.sort(lon_sub))) > 5) and (lon_sub[0] < 20 or lon_sub[-1] > 340)
+        if spans_seam:
+            dp_cyc, lon_cyc = add_cyclic_point(dp_slice, coord=lon_sub)
+            lon_for_fill = lon_cyc
+            dp_slice = dp_cyc
+
         cf = ax.contourf(
-            lon_plot, lat_sub, dewpoint_f[0, :, :],
+            lon_for_fill, lat_sub, dp_slice,
             levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
             transform=data_crs
         )
 
-        # wind barbs (thinned)
+        # wind barbs (thinned by subset-based strides)
         si = params['stride_y']; sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
