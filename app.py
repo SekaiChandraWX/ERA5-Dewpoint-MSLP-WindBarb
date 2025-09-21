@@ -11,10 +11,10 @@ import tempfile
 from datetime import datetime
 import io
 
-# -------------------- Streamlit page --------------------
+# Page configuration
 st.set_page_config(page_title="ERA5 Weather Visualization", layout="wide")
 
-# Region coordinates dictionary (can include weird longitudes; we normalize to 0..360 later)
+# Region coordinates dictionary (unchanged; values can be outside [-180, 180] and will be normalized)
 REGIONS = {
     "General": {
         "Continental United States": [-125, -66.5, 24.396308, 49.384358],
@@ -31,17 +31,17 @@ REGIONS = {
         "Mexico and Central America": [-119, -56.1, 3.3, 35.7]
     },
     "Tropics": {
-        "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],       # near dateline
+        "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],
         "East Pacific Basin": [-161.4, -86.3, 3, 39],
-        "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],   # crosses dateline in -180..180
+        "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],
         "Northern Indian Ocean Basin": [-317, -256.3, -5, 34],
         "South Indian Ocean Basin": [32.7, 125.4, -44.8, 3.5],
         "Australian Basin": [100, 192.7, -50.2, -1.9]
     }
 }
 
-# -------------------- Color map --------------------
 def create_custom_colormap():
+    """Create the custom colormap for dewpoint temperature."""
     colors = [(152, 109, 77), (150, 108, 76), (148, 107, 76), (146, 106, 75), (144, 105, 75), (142, 104, 74),
               (140, 102, 74), (138, 101, 73), (136, 100, 72), (134, 99, 72), (132, 98, 71), (130, 97, 71),
               (128, 96, 70), (126, 95, 70), (124, 94, 69), (122, 93, 68), (120, 91, 68), (118, 90, 67), (116, 89, 67),
@@ -66,65 +66,65 @@ def create_custom_colormap():
     norm_colors = [(r/255, g/255, b/255) for r, g, b in colors]
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
-# -------------------- Geo helpers --------------------
-def to0360(lon):
-    """Map longitude to [0, 360)."""
-    return lon % 360.0
-
-def geodetic_extent_0_360(ext):
+def normalize_extent(ext):
     """
-    Convert [lon_w, lon_e, lat_s, lat_n] into a geodetic (PlateCarree) extent with 0..360 longitudes
-    and west < east, so Cartopy doesn't wrap the world. Keeps lat order intact.
+    Normalize [lon_min, lon_max, lat_min, lat_max] to lon in [-180, 180).
+    Works even if the input longitudes are outside that range.
     """
-    lon_w, lon_e, lat_s, lat_n = ext
-    w = to0360(lon_w)
-    e = to0360(lon_e)
-    if e <= w:
-        e += 360.0
-    if lat_s > lat_n:  # sanity
-        lat_s, lat_n = lat_n, lat_s
-    return [w, e, lat_s, lat_n]
+    lon0, lon1, lat0, lat1 = ext
+    def norm_lon(x):
+        return ((x + 180) % 360) - 180
+    return [norm_lon(lon0), norm_lon(lon1), lat0, lat1]
 
-def extent_span_deg(ext_0360):
-    """Return lon and lat span for 0..360 geodetic extent."""
-    w, e, s, n = ext_0360
-    return (e - w), abs(n - s)
-
-# -------------------- Auto-thinning (softer + denser isobars) --------------------
-def auto_plot_params(geodetic_ext, nx, ny):
+def extent_span_deg(normed_extent):
     """
-    Softer thinning to keep more detail, with denser isobars.
-    geodetic_ext is in 0..360 with west<east.
+    Return (lon_span_deg, lat_span_deg, span_proxy) for a normalized extent.
+    Uses wrap-aware longitude span (smallest arc).
     """
-    lon_span, lat_span = extent_span_deg(geodetic_ext)
-    span = max(lon_span, lat_span)
+    lon0, lon1, lat0, lat1 = normed_extent
+    # wrap-aware lon span
+    lon_span = (lon1 - lon0) % 360.0
+    if lon_span > 180:
+        lon_span = 360 - lon_span
+    lat_span = abs(lat1 - lat0)
+    # proxy for how "zoomed out" we are
+    span_proxy = max(lon_span, lat_span)
+    return lon_span, lat_span, span_proxy
 
-    if span >= 120:         # basin/hemisphere
-        desired_x = 40
+def auto_plot_params(normed_extent, nx, ny):
+    """
+    Decide barb density, barb length, isobar interval, and line widths
+    based on the map span + grid size. Returns a dict:
+      { 'stride_y', 'stride_x', 'barb_len', 'mslp_lw', 'coast_lw', 'border_lw', 'state_lw', 'cint' }
+    """
+    _, _, span = extent_span_deg(normed_extent)
+
+    if span >= 120:         # basin/hemisphere scale
+        desired_x = 25
+        barb_len  = 4
+        mslp_lw   = 0.6
+        coast_lw  = 0.7
+        border_lw = 0.5
+        state_lw  = 0.4
+        cint      = 4       # 4 hPa spacing cleans up clutter
+    elif span >= 60:        # sub-basin / multi-country
+        desired_x = 35
         barb_len  = 5
+        mslp_lw   = 0.8
+        coast_lw  = 0.8
+        border_lw = 0.6
+        state_lw  = 0.4
+        cint      = 3
+    elif span >= 30:        # large country / region
+        desired_x = 45
+        barb_len  = 6
         mslp_lw   = 1.0
         coast_lw  = 0.9
         border_lw = 0.7
         state_lw  = 0.5
-        cint      = 2       # tighter isobars
-    elif span >= 60:        # sub-basin / multi-country
+        cint      = 2
+    else:                   # zoomed-in (CONUS-sized or smaller)
         desired_x = 55
-        barb_len  = 6
-        mslp_lw   = 1.1
-        coast_lw  = 1.0
-        border_lw = 0.8
-        state_lw  = 0.6
-        cint      = 2
-    elif span >= 30:        # large region
-        desired_x = 70
-        barb_len  = 6
-        mslp_lw   = 1.1
-        coast_lw  = 1.0
-        border_lw = 0.8
-        state_lw  = 0.6
-        cint      = 2
-    else:                   # zoomed-in
-        desired_x = 85
         barb_len  = 7
         mslp_lw   = 1.2
         coast_lw  = 1.0
@@ -134,10 +134,7 @@ def auto_plot_params(geodetic_ext, nx, ny):
 
     # convert desired_x to strides using available grid size
     stride_x = max(1, nx // desired_x)
-    stride_y = max(1, ny // int(desired_x / 1.6))
-    stride_x = min(stride_x, 8 if span < 150 else 12)
-    stride_y = min(stride_y, 8 if span < 150 else 12)
-
+    stride_y = max(1, ny // int(desired_x / 1.6))  # keep a bit taller spacing N/S
     return {
         'stride_y': stride_y,
         'stride_x': stride_x,
@@ -149,26 +146,36 @@ def auto_plot_params(geodetic_ext, nx, ny):
         'cint': cint
     }
 
-# -------------------- Time helper --------------------
 def read_valid_time(ds):
-    var = ds.variables.get('valid_time') or ds.variables.get('time')
-    if var is None:
+    """
+    Read a nice datetime string from ERA5 single-level netCDF.
+    Supports both 'valid_time' and 'time' variable names.
+    """
+    var = None
+    if 'valid_time' in ds.variables:
+        var = ds.variables['valid_time']
+    elif 'time' in ds.variables:
+        var = ds.variables['time']
+    else:
         return "Unknown valid time"
+
     time_unit = getattr(var, 'units', None)
     time_calendar = getattr(var, 'calendar', 'standard')
+    tvals = var[:]
     try:
-        date = nc.num2date(var[:][0], units=time_unit, calendar=time_calendar)
-        return date.strftime("%B %d, %Y - %H:%M UTC")
+        date = nc.num2date(tvals[0], units=time_unit, calendar=time_calendar)
+        return date.strftime("%B %d,  %Y - %H:%M UTC")
     except Exception:
         return "Unknown valid time"
 
-# -------------------- Main renderer --------------------
 def generate_visualization(year, month, day, hour, region_coords, api_key):
     """Generate the ERA5 visualization."""
     date_input = f"{year:04}{month:02}{day:02}{hour:02}"
 
-    # CDS API
+    # Configure CDS API
     c = cdsapi.Client(url='https://cds.climate.copernicus.eu/api', key=api_key)
+
+    # Define dataset and request parameters
     dataset = "reanalysis-era5-single-levels"
     request = {
         "product_type": "reanalysis",
@@ -183,116 +190,123 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         "format": "netcdf"
     }
 
-    # temp file
+    # Create temporary file
     with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp_file:
         target = tmp_file.name
 
     try:
-        # retrieve & read
+        # Retrieve data from ECMWF
         c.retrieve(dataset, request, target)
-        ds = nc.Dataset(target)
 
-        # variables
-        mslp = ds.variables['msl'][:] / 100.0  # hPa
-        d2m  = ds.variables['d2m'][:]          # K
-        u10  = ds.variables['u10'][:]
-        v10  = ds.variables['v10'][:]
-        lon0 = ds.variables['longitude'][:]    # ERA5 is typically 0..360
-        lat  = ds.variables['latitude'][:]     # often descending
+        # Load the data
+        dataset_nc = nc.Dataset(target)
 
-        # sort longitude strictly increasing in 0..360
-        lon_360 = np.asarray(lon0)
-        order = np.argsort(lon_360)
-        lon_360 = lon_360[order]
-        mslp = mslp[:, :, order]
-        d2m  = d2m[:,  :, order]
-        u10  = u10[:,  :, order]
-        v10  = v10[:,  :, order]
+        # Extract the variables
+        mslp = dataset_nc.variables['msl'][:] / 100.0  # hPa
+        dewpoint = (dataset_nc.variables['d2m'][:] - 273.15) * 9/5 + 32  # °F
+        temperature = (dataset_nc.variables['t2m'][:] - 273.15) * 9/5 + 32  # °F
+        u_wind = dataset_nc.variables['u10'][:]
+        v_wind = dataset_nc.variables['v10'][:]
+        lon_raw = dataset_nc.variables['longitude'][:]  # usually 0..360
+        lat_raw = dataset_nc.variables['latitude'][:]   # often descending
 
-        # dewpoint to °F
-        dewpoint_f = (d2m - 273.15) * 9/5 + 32
+        # Time label
+        date_str = read_valid_time(dataset_nc)
 
-        # build geodetic extent in 0..360 (west < east)
-        geodetic_ext = geodetic_extent_0_360(region_coords)
+        # ---- Robust longitude/latitude handling ----
+        # Wrap longitudes to [-180, 180)
+        lon = np.where(lon_raw > 180, lon_raw - 360, lon_raw)
+        # Sort by longitude so contour/contourf see increasing X
+        lon_order = np.argsort(lon)
+        lon = lon[lon_order]
+        # Reorder data along lon dimension (last axis)
+        mslp = mslp[:, :, lon_order]
+        dewpoint = dewpoint[:, :, lon_order]
+        temperature = temperature[:, :, lon_order]
+        u_wind = u_wind[:, :, lon_order]
+        v_wind = v_wind[:, :, lon_order]
 
-        # colormap and title time
+        # Latitude as-is (descending is fine for Cartopy/Matplotlib)
+        lat = lat_raw
+
+        # Create custom colormap
         cmap = create_custom_colormap()
-        date_str = read_valid_time(ds)
 
-        # figure/axes: always 180-centered projection (dateline-safe)
-        proj = ccrs.PlateCarree(central_longitude=180)
-        fig, ax = plt.subplots(figsize=(18, 9), subplot_kw={'projection': proj})
+        # Set up the plot
+        fig, ax = plt.subplots(figsize=(18, 9), subplot_kw={'projection': ccrs.PlateCarree()})
 
-        # set extent in geodetic CRS (0..360)
-        ax.set_extent(geodetic_ext, crs=ccrs.PlateCarree())
+        # Normalize and set extent
+        normed_extent = normalize_extent(region_coords)
+        ax.set_extent(normed_extent, crs=ccrs.PlateCarree())
 
-        # auto-thin based on extent/grid
-        params = auto_plot_params(geodetic_ext, nx=lon_360.size, ny=lat.size)
+        # Decide density/line params from extent and grid size
+        params = auto_plot_params(normed_extent, nx=lon.size, ny=lat.size)
 
-        # map features
+        # Map decoration (line widths scaled)
         ax.set_facecolor('#C0C0C0')
         ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
-        # STATES can be heavy and mostly US-only; comment out globally. Uncomment if desired.
-        # ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
+        ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
 
-        # 2D grid for barbs
-        LON2, LAT2 = np.meshgrid(lon_360, lat)
+        # Build 2D coordinate grid for barbs
+        LON2, LAT2 = np.meshgrid(lon, lat)
 
-        # isobars with denser spacing; guard level count for performance
+        # Plot MSLP isobars — levels adapted to zoom
         mslp0 = mslp[0, :, :]
         cint = params['cint']
-        mmin = np.floor(np.nanmin(mslp0) / cint) * cint
-        mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
-        levels = np.arange(mmin, mmax + cint, cint)
-        if levels.size > 80:
-            levels = levels[::2]
+        mmin = np.floor(mslp0.min() / cint) * cint
+        mmax = np.ceil(mslp0.max() / cint) * cint
+        mlevels = np.arange(mmin, mmax + cint, cint)
 
         cs = ax.contour(
-            lon_360, lat, mslp0,
-            levels=levels, colors='black',
+            lon, lat, mslp0,
+            levels=mlevels,
+            colors='black',
             linewidths=params['mslp_lw'],
             transform=ccrs.PlateCarree()
         )
 
-        # dewpoint fill
-        dp_levels = np.linspace(-40, 90, 256)
+        # Filled dewpoint (kept smooth)
+        levels = np.linspace(-40, 90, 256)
         cf = ax.contourf(
-            lon_360, lat, dewpoint_f[0, :, :],
-            levels=dp_levels, cmap=cmap, extend='both',
+            lon, lat, dewpoint[0, :, :],
+            levels=levels, cmap=cmap, extend='both',
             transform=ccrs.PlateCarree()
         )
 
-        # wind barbs
+        # Thinned wind barbs (stride + shorter length when zoomed out)
         si = params['stride_y']
         sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
-            u10[0, ::si, ::sj], v10[0, ::si, ::sj],
+            u_wind[0, ::si, ::sj], v_wind[0, ::si, ::sj],
             length=params['barb_len'],
             transform=ccrs.PlateCarree()
         )
 
-        # colorbar and title
+        # Colorbar for dewpoint
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.7)
         cb.set_label('2m Dewpoint Temperature (°F)')
+
+        # Title
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
-        # save to buffer
+        # Save to buffer
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
 
-        # cleanup
-        ds.close()
+        # Cleanup
+        dataset_nc.close()
         plt.close(fig)
+
         return buffer
 
     finally:
         if os.path.exists(target):
             os.remove(target)
 
-# -------------------- Streamlit UI --------------------
+# Streamlit UI
 st.title("ERA5 Weather Visualization")
 
 # Get API key from secrets
@@ -302,7 +316,7 @@ except KeyError:
     st.error("CDS API key not found in secrets. Please configure your API key.")
     st.stop()
 
-# inputs
+# Date and time inputs
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     year = st.number_input("Year", min_value=1940, max_value=datetime.now().year, value=2023)
@@ -313,7 +327,7 @@ with col3:
 with col4:
     hour = st.number_input("Hour", min_value=0, max_value=23, value=12)
 
-# region + button
+# Region selection and generate button
 col5, col6 = st.columns(2)
 with col5:
     region_options = []
@@ -322,9 +336,10 @@ with col5:
             region_options.append(f"{category}: {region_name}")
     selected_region = st.selectbox("Select Region", region_options)
 with col6:
-    generate_button = st.button("Generate", type="primary", help="Generate the ERA5 visualization")
+    generate_button = st.button("Generate", type="primary",
+                                help="Generate the ERA5 visualization")
 
-# run
+# Generate visualization when button is clicked
 if generate_button:
     category, region_name = selected_region.split(": ", 1)
     region_coords = REGIONS[category][region_name]
