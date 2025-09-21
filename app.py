@@ -34,7 +34,7 @@ REGIONS = {
         "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],
         "East Pacific Basin": [-161.4, -86.3, 3, 39],
         "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],
-        "Northern Indian Ocean Basin": [-317, -256.3, -5, 34],
+        "Northern Indian Ocean Basin": [-317, -256.3, 0, 34],
         "South Indian Ocean Basin": [32.7, 125.4, -44.8, 3.5],
         "Australian Basin": [100, 192.7, -50.2, -1.9]
     }
