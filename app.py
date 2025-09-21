@@ -18,6 +18,7 @@ st.set_page_config(page_title="ERA5 Weather Visualization", layout="wide")
 REGIONS = {
     "General": {
         "Continental United States": [-125, -66.5, 24.396308, 49.384358],
+        "North Atlantic Basin": [-102.8, -7.9, 6, 57.6],
         "Europe": [-12.2, 49.4, 26.6, 74.3],
         "Middle East and South Asia": [27.9, 102.3, 1.8, 67.5],
         "East and Southeast Asia": [86.4, 160.8, -14.7, 50.9],
@@ -30,7 +31,6 @@ REGIONS = {
         "Mexico and Central America": [-119, -56.1, 3.3, 35.7]
     },
     "Tropics": {
-        "North Atlantic Basin": [-102.8, -7.9, 6, 57.6],
         "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],       # crosses dateline
         "East Pacific Basin": [-161.4, -86.3, 3, 39],
         "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],   # crosses dateline
@@ -78,64 +78,59 @@ def normalize_extent(ext):
         return ((x + 180) % 360) - 180
     return [norm_lon(lon0), norm_lon(lon1), lat0, lat1]
 
-def extent_span_deg(ext_norm):
-    """Return (lon_span_deg, lat_span_deg, span_proxy) for a normalized extent (wrap-aware)."""
-    lon0, lon1, lat0, lat1 = ext_norm
-    lon_span = (lon1 - lon0) % 360.0
-    if lon_span > 180:
-        lon_span = 360 - lon_span
-    lat_span = abs(lat1 - lat0)
-    return lon_span, lat_span, max(lon_span, lat_span)
+def crosses_dateline(ext_norm):
+    """True if the normalized extent crosses the dateline (i.e., west > east)."""
+    lon0, lon1, _, _ = ext_norm
+    return lon0 > lon1
 
-def choose_projection_and_extent(ext_norm):
+def to_lon360(x):
+    """Map longitude to [0, 360)."""
+    return x if x >= 0 else x + 360
+
+def extent_to_lon360(ext_norm):
     """
-    Dateline-aware choice:
-      - If lon0 > lon1 (crosses the dateline), use PlateCarree(central_longitude=180)
-        and provide extent in that CRS.
-      - Else use default PlateCarree.
+    Convert normalized extent to a [0,360) extent with west < east,
+    suitable for dateline-crossing windows like [170, 200].
     """
     lon0, lon1, lat0, lat1 = ext_norm
-    crosses_dateline = lon0 > lon1
-    if crosses_dateline:
-        proj = ccrs.PlateCarree(central_longitude=180)
-        # convert extent longitudes into the 180-centered frame
-        def to180(lon):
-            return ((lon - 180 + 360) % 360) - 180
-        extent_180 = [to180(lon0), to180(lon1), lat0, lat1]
-        extent_crs = ccrs.PlateCarree(central_longitude=180)
-        return proj, extent_180, extent_crs
-    else:
-        proj = ccrs.PlateCarree()
-        extent_crs = ccrs.PlateCarree()
-        return proj, ext_norm, extent_crs
+    w = to_lon360(lon0)
+    e = to_lon360(lon1)
+    if e <= w:
+        e += 360.0
+    return [w, e, lat0, lat1]
 
-# -------------------- Auto-thinning (softer) --------------------
+# -------------------- Auto-thinning (softer, denser isobars) --------------------
 
 def auto_plot_params(normed_extent, nx, ny):
     """
     Softer thinning: keep more detail at all scales.
-    Returns:
-      { 'stride_y', 'stride_x', 'barb_len', 'mslp_lw', 'coast_lw', 'border_lw', 'state_lw', 'cint' }
+    Returns dict with barb/line density and isobar spacing.
     """
-    lon_span, lat_span, span = extent_span_deg(normed_extent)
+    lon0, lon1, lat0, lat1 = normed_extent
+    lon_span = (lon1 - lon0) % 360.0
+    if lon_span > 180:
+        lon_span = 360 - lon_span
+    lat_span = abs(lat1 - lat0)
+    span = max(lon_span, lat_span)
 
+    # Denser isobars than before
     if span >= 120:         # basin/hemisphere
-        desired_x = 40      # denser than before
+        desired_x = 40
         barb_len  = 5
-        mslp_lw   = 0.8
-        coast_lw  = 0.8
-        border_lw = 0.6
-        state_lw  = 0.4
-        cint      = 4
-    elif span >= 60:        # sub-basin / multi-country
-        desired_x = 55
-        barb_len  = 6
         mslp_lw   = 0.9
         coast_lw  = 0.9
         border_lw = 0.7
         state_lw  = 0.5
-        cint      = 3
-    elif span >= 30:        # large country / region
+        cint      = 3       # was 4 -> denser
+    elif span >= 60:        # sub-basin / multi-country
+        desired_x = 55
+        barb_len  = 6
+        mslp_lw   = 1.0
+        coast_lw  = 1.0
+        border_lw = 0.8
+        state_lw  = 0.6
+        cint      = 2       # was 3 -> denser
+    elif span >= 30:        # large region
         desired_x = 70
         barb_len  = 6
         mslp_lw   = 1.1
@@ -152,11 +147,8 @@ def auto_plot_params(normed_extent, nx, ny):
         state_lw  = 0.6
         cint      = 2
 
-    # convert desired_x to strides using available grid size
     stride_x = max(1, nx // desired_x)
     stride_y = max(1, ny // int(desired_x / 1.6))
-
-    # safety: never thin beyond every 8th gp (or 12th if near-global)
     stride_x = min(stride_x, 8 if span < 150 else 12)
     stride_y = min(stride_y, 8 if span < 150 else 12)
 
@@ -224,45 +216,77 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 
         # Variables
         mslp = ds.variables['msl'][:] / 100.0  # hPa
-        d2m = ds.variables['d2m'][:]           # K
-        t2m = ds.variables['t2m'][:]           # K
-        u10 = ds.variables['u10'][:]
-        v10 = ds.variables['v10'][:]
-        lon_raw = ds.variables['longitude'][:]  # usually 0..360
-        lat_raw = ds.variables['latitude'][:]   # often descending
+        d2m  = ds.variables['d2m'][:]          # K
+        u10  = ds.variables['u10'][:]
+        v10  = ds.variables['v10'][:]
+        lon0_360 = ds.variables['longitude'][:]   # typically 0..360
+        lat = ds.variables['latitude'][:]        # often descending
 
         # Time label
         date_str = read_valid_time(ds)
 
-        # Longitude wrap to [-180, 180) and reorder to increasing
-        lon = np.where(lon_raw > 180, lon_raw - 360, lon_raw)
-        lon_order = np.argsort(lon)
-        lon = lon[lon_order]
-        mslp = mslp[:, :, lon_order]
-        d2m = d2m[:, :, lon_order]
-        t2m = t2m[:, :, lon_order]
-        u10 = u10[:, :, lon_order]
-        v10 = v10[:, :, lon_order]
+        # Build both longitude domains:
+        #  - lon_360 increasing in [0,360)
+        lon_360 = lon0_360.copy()
+        order_360 = np.argsort(lon_360)
+        lon_360 = lon_360[order_360]
+        mslp_360 = mslp[:, :, order_360]
+        d2m_360  = d2m[:, :, order_360]
+        u10_360  = u10[:, :, order_360]
+        v10_360  = v10[:, :, order_360]
 
-        # Latitude as-is
-        lat = lat_raw
+        #  - lon_m180 increasing in [-180,180)
+        lon_m180 = np.where(lon_360 > 180, lon_360 - 360, lon_360)
+        order_m180 = np.argsort(lon_m180)
+        lon_m180 = lon_m180[order_m180]
+        mslp_m180 = mslp_360[:, :, order_m180]
+        d2m_m180  = d2m_360[:, :, order_m180]
+        u10_m180  = u10_360[:, :, order_m180]
+        v10_m180  = v10_360[:, :, order_m180]
 
-        # Convert temps to °F for plotting (dewpoint)
-        dewpoint = (d2m - 273.15) * 9/5 + 32
+        # Normalize requested region
+        normed_extent = normalize_extent(region_coords)
+        is_crossing = crosses_dateline(normed_extent)
+
+        # Choose which longitude domain to use
+        if is_crossing:
+            # Use lon in 0..360 and an extent like [170, 200]
+            plot_lon = lon_360
+            plot_mslp = mslp_360
+            plot_d2m  = d2m_360
+            plot_u10  = u10_360
+            plot_v10  = v10_360
+            extent_360 = extent_to_lon360(normed_extent)  # [w,e,lat0,lat1] with w<e in 0..360
+            proj = ccrs.PlateCarree()                     # keep default projection
+            extent_crs = ccrs.PlateCarree()               # and default data CRS
+            west, east, lat0, lat1 = extent_360
+            # Matplotlib/Cartopy are fine with extents >180 here (e.g., [170, 200])
+            set_extent = [west, east, lat0, lat1]
+            data_crs = ccrs.PlateCarree()                 # data longitudes are 0..360
+        else:
+            # Use lon in [-180,180) and a standard extent
+            plot_lon = lon_m180
+            plot_mslp = mslp_m180
+            plot_d2m  = d2m_m180
+            plot_u10  = u10_m180
+            plot_v10  = v10_m180
+            proj = ccrs.PlateCarree()
+            extent_crs = ccrs.PlateCarree()
+            set_extent = normed_extent
+            data_crs = ccrs.PlateCarree()
+
+        # Convert dewpoint to °F
+        dewpoint_f = (plot_d2m - 273.15) * 9/5 + 32
 
         # Colormap
         cmap = create_custom_colormap()
 
-        # Normalize region and pick projection/extent (dateline-aware)
-        normed_extent = normalize_extent(region_coords)
-        proj, plot_extent, extent_crs = choose_projection_and_extent(normed_extent)
-
         # Figure/Axes
         fig, ax = plt.subplots(figsize=(18, 9), subplot_kw={'projection': proj})
-        ax.set_extent(plot_extent, crs=extent_crs)
+        ax.set_extent(set_extent, crs=extent_crs)
 
-        # Auto-thinning + line scaling
-        params = auto_plot_params(normed_extent, nx=lon.size, ny=lat.size)
+        # Auto-thinning + denser isobars
+        params = auto_plot_params(normed_extent, nx=plot_lon.size, ny=lat.size)
 
         # Map features
         ax.set_facecolor('#C0C0C0')
@@ -270,30 +294,35 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
         ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
 
-        # Build 2D coords for barbs
-        LON2, LAT2 = np.meshgrid(lon, lat)
+        # 2D coords for barbs
+        LON2, LAT2 = np.meshgrid(plot_lon, lat)
 
-        # Isobars
-        mslp0 = mslp[0, :, :]
+        # Isobars (denser)
+        mslp0 = plot_mslp[0, :, :]
         cint = params['cint']
-        mmin = np.floor(mslp0.min() / cint) * cint
-        mmax = np.ceil(mslp0.max() / cint) * cint
-        mlevels = np.arange(mmin, mmax + cint, cint)
+        mmin = np.floor(np.nanmin(mslp0) / cint) * cint
+        mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
+        # guard rails: avoid >80 levels which can be slow on some hosts
+        max_levels = 60
+        levels = np.arange(mmin, mmax + cint, cint)
+        if levels.size > max_levels:
+            skip = int(np.ceil(levels.size / max_levels))
+            levels = levels[::skip]
 
         cs = ax.contour(
-            lon, lat, mslp0,
-            levels=mlevels,
+            plot_lon, lat, mslp0,
+            levels=levels,
             colors='black',
             linewidths=params['mslp_lw'],
-            transform=ccrs.PlateCarree()
+            transform=data_crs
         )
 
         # Filled dewpoint
-        levels = np.linspace(-40, 90, 256)
+        dp_levels = np.linspace(-40, 90, 256)
         cf = ax.contourf(
-            lon, lat, dewpoint[0, :, :],
-            levels=levels, cmap=cmap, extend='both',
-            transform=ccrs.PlateCarree()
+            plot_lon, lat, dewpoint_f[0, :, :],
+            levels=dp_levels, cmap=cmap, extend='both',
+            transform=data_crs
         )
 
         # Wind barbs (thinned)
@@ -301,9 +330,9 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
-            u10[0, ::si, ::sj], v10[0, ::si, ::sj],
+            plot_u10[0, ::si, ::sj], plot_v10[0, ::si, ::sj],
             length=params['barb_len'],
-            transform=ccrs.PlateCarree()
+            transform=data_crs
         )
 
         # Colorbar
@@ -311,6 +340,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         cb.set_label('2m Dewpoint Temperature (°F)')
 
         # Title
+        date_str = read_valid_time(ds)
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
         # Save to buffer
