@@ -34,7 +34,7 @@ REGIONS = {
         "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],
         "East Pacific Basin": [-161.4, -86.3, 3, 39],
         "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],
-        "Northern Indian Ocean Basin": [-317, -256.3, 0, 34],
+        "Northern Indian Ocean Basin": [-317, -256.3, -5, 34],
         "South Indian Ocean Basin": [32.7, 125.4, -44.8, 3.5],
         "Australian Basin": [100, 192.7, -50.2, -1.9]
     }
@@ -76,6 +76,76 @@ def normalize_extent(ext):
         return ((x + 180) % 360) - 180
     return [norm_lon(lon0), norm_lon(lon1), lat0, lat1]
 
+def extent_span_deg(normed_extent):
+    """
+    Return (lon_span_deg, lat_span_deg, span_proxy) for a normalized extent.
+    Uses wrap-aware longitude span (smallest arc).
+    """
+    lon0, lon1, lat0, lat1 = normed_extent
+    # wrap-aware lon span
+    lon_span = (lon1 - lon0) % 360.0
+    if lon_span > 180:
+        lon_span = 360 - lon_span
+    lat_span = abs(lat1 - lat0)
+    # proxy for how "zoomed out" we are
+    span_proxy = max(lon_span, lat_span)
+    return lon_span, lat_span, span_proxy
+
+def auto_plot_params(normed_extent, nx, ny):
+    """
+    Decide barb density, barb length, isobar interval, and line widths
+    based on the map span + grid size. Returns a dict:
+      { 'stride_y', 'stride_x', 'barb_len', 'mslp_lw', 'coast_lw', 'border_lw', 'state_lw', 'cint' }
+    """
+    _, _, span = extent_span_deg(normed_extent)
+
+    if span >= 120:         # basin/hemisphere scale
+        desired_x = 25
+        barb_len  = 4
+        mslp_lw   = 0.6
+        coast_lw  = 0.7
+        border_lw = 0.5
+        state_lw  = 0.4
+        cint      = 4       # 4 hPa spacing cleans up clutter
+    elif span >= 60:        # sub-basin / multi-country
+        desired_x = 35
+        barb_len  = 5
+        mslp_lw   = 0.8
+        coast_lw  = 0.8
+        border_lw = 0.6
+        state_lw  = 0.4
+        cint      = 3
+    elif span >= 30:        # large country / region
+        desired_x = 45
+        barb_len  = 6
+        mslp_lw   = 1.0
+        coast_lw  = 0.9
+        border_lw = 0.7
+        state_lw  = 0.5
+        cint      = 2
+    else:                   # zoomed-in (CONUS-sized or smaller)
+        desired_x = 55
+        barb_len  = 7
+        mslp_lw   = 1.2
+        coast_lw  = 1.0
+        border_lw = 0.8
+        state_lw  = 0.6
+        cint      = 2
+
+    # convert desired_x to strides using available grid size
+    stride_x = max(1, nx // desired_x)
+    stride_y = max(1, ny // int(desired_x / 1.6))  # keep a bit taller spacing N/S
+    return {
+        'stride_y': stride_y,
+        'stride_x': stride_x,
+        'barb_len': barb_len,
+        'mslp_lw': mslp_lw,
+        'coast_lw': coast_lw,
+        'border_lw': border_lw,
+        'state_lw': state_lw,
+        'cint': cint
+    }
+
 def read_valid_time(ds):
     """
     Read a nice datetime string from ERA5 single-level netCDF.
@@ -94,7 +164,7 @@ def read_valid_time(ds):
     tvals = var[:]
     try:
         date = nc.num2date(tvals[0], units=time_unit, calendar=time_calendar)
-        return date.strftime("%B %d, %Y - %H:%M UTC")
+        return date.strftime("%B %d,  %Y - %H:%M UTC")
     except Exception:
         return "Unknown valid time"
 
@@ -132,7 +202,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         dataset_nc = nc.Dataset(target)
 
         # Extract the variables
-        mslp = dataset_nc.variables['msl'][:] / 100.0  # Convert to hPa
+        mslp = dataset_nc.variables['msl'][:] / 100.0  # hPa
         dewpoint = (dataset_nc.variables['d2m'][:] - 273.15) * 9/5 + 32  # °F
         temperature = (dataset_nc.variables['t2m'][:] - 273.15) * 9/5 + 32  # °F
         u_wind = dataset_nc.variables['u10'][:]
@@ -156,8 +226,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         u_wind = u_wind[:, :, lon_order]
         v_wind = v_wind[:, :, lon_order]
 
-        # If latitude is descending, keep as-is (Cartopy is fine),
-        # but capture as 'lat' for consistency
+        # Latitude as-is (descending is fine for Cartopy/Matplotlib)
         lat = lat_raw
 
         # Create custom colormap
@@ -170,44 +239,56 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         normed_extent = normalize_extent(region_coords)
         ax.set_extent(normed_extent, crs=ccrs.PlateCarree())
 
-        # Map decoration
-        ax.set_facecolor('#C0C0C0')
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-        ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.6)
-        # STATES draws global admin-1 lines from Natural Earth; harmless if none in view
-        ax.add_feature(cfeature.STATES, linestyle=':', linewidth=0.4)
+        # Decide density/line params from extent and grid size
+        params = auto_plot_params(normed_extent, nx=lon.size, ny=lat.size)
 
-        # Plot MSLP isobars
+        # Map decoration (line widths scaled)
+        ax.set_facecolor('#C0C0C0')
+        ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
+        ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
+        ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
+
+        # Build 2D coordinate grid for barbs
+        LON2, LAT2 = np.meshgrid(lon, lat)
+
+        # Plot MSLP isobars — levels adapted to zoom
+        mslp0 = mslp[0, :, :]
+        cint = params['cint']
+        mmin = np.floor(mslp0.min() / cint) * cint
+        mmax = np.ceil(mslp0.max() / cint) * cint
+        mlevels = np.arange(mmin, mmax + cint, cint)
+
         cs = ax.contour(
-            lon, lat, mslp[0, :, :],
-            levels=np.arange(950, 1050, 2),
-            colors='black', linewidths=1,
+            lon, lat, mslp0,
+            levels=mlevels,
+            colors='black',
+            linewidths=params['mslp_lw'],
             transform=ccrs.PlateCarree()
         )
 
-        # Plot 2m dewpoint temperature with custom colormap
-        levels = np.linspace(-40, 90, 256)  # smooth colormap
+        # Filled dewpoint (kept smooth)
+        levels = np.linspace(-40, 90, 256)
         cf = ax.contourf(
             lon, lat, dewpoint[0, :, :],
             levels=levels, cmap=cmap, extend='both',
             transform=ccrs.PlateCarree()
         )
 
-        # Plot 10m wind barbs (downsampled)
-        # Use 2D lon/lat via meshgrid for barbs clarity
-        LON2, LAT2 = np.meshgrid(lon, lat)
-        step_i = 5
+        # Thinned wind barbs (stride + shorter length when zoomed out)
+        si = params['stride_y']
+        sj = params['stride_x']
         ax.barbs(
-            LON2[::step_i, ::step_i], LAT2[::step_i, ::step_i],
-            u_wind[0, ::step_i, ::step_i], v_wind[0, ::step_i, ::step_i],
-            length=6, transform=ccrs.PlateCarree()
+            LON2[::si, ::sj], LAT2[::si, ::sj],
+            u_wind[0, ::si, ::sj], v_wind[0, ::si, ::sj],
+            length=params['barb_len'],
+            transform=ccrs.PlateCarree()
         )
 
-        # Add colorbar for dewpoint
+        # Colorbar for dewpoint
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.7)
         cb.set_label('2m Dewpoint Temperature (°F)')
 
-        # Add title
+        # Title
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
         # Save to buffer
@@ -215,14 +296,13 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
 
-        # Clean up figure and dataset
+        # Cleanup
         dataset_nc.close()
         plt.close(fig)
 
         return buffer
 
     finally:
-        # Clean up temporary file
         if os.path.exists(target):
             os.remove(target)
 
@@ -238,55 +318,42 @@ except KeyError:
 
 # Date and time inputs
 col1, col2, col3, col4 = st.columns(4)
-
 with col1:
     year = st.number_input("Year", min_value=1940, max_value=datetime.now().year, value=2023)
-
 with col2:
     month = st.number_input("Month", min_value=1, max_value=12, value=1)
-
 with col3:
     day = st.number_input("Day", min_value=1, max_value=31, value=1)
-
 with col4:
     hour = st.number_input("Hour", min_value=0, max_value=23, value=12)
 
 # Region selection and generate button
 col5, col6 = st.columns(2)
-
 with col5:
-    # Create region options for selectbox
     region_options = []
     for category, regions in REGIONS.items():
         for region_name in regions.keys():
             region_options.append(f"{category}: {region_name}")
     selected_region = st.selectbox("Select Region", region_options)
-
 with col6:
     generate_button = st.button("Generate", type="primary",
                                 help="Generate the ERA5 visualization")
 
 # Generate visualization when button is clicked
 if generate_button:
-    # Parse selected region
     category, region_name = selected_region.split(": ", 1)
     region_coords = REGIONS[category][region_name]
-
     try:
         with st.spinner("Downloading ERA5 data and generating visualization..."):
             image_buffer = generate_visualization(year, month, day, hour, region_coords, api_key)
-
         st.success("Visualization generated successfully!")
         st.image(image_buffer, caption=f"ERA5 Weather Data for {year}-{month:02d}-{day:02d} {hour:02d}:00 UTC")
-
-        # Download button
         st.download_button(
             label="Download Image",
             data=image_buffer,
             file_name=f"ERA5_{year}{month:02d}{day:02d}{hour:02d}_{region_name.replace(' ', '_')}.png",
             mime="image/png"
         )
-
     except Exception as e:
         st.error(f"Error generating visualization: {str(e)}")
         st.info("Make sure the date/time is valid and the API service is available.")
