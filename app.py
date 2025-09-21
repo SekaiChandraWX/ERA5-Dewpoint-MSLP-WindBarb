@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.util import add_cyclic_point
 import os
 import tempfile
 from datetime import datetime
@@ -69,34 +70,42 @@ def create_custom_colormap():
 # -------------------- Geo helpers --------------------
 
 def normalize_extent(ext):
-    """
-    Normalize [lon_min, lon_max, lat_min, lat_max] to lon in [-180, 180).
-    Works even if the input longitudes are outside that range.
-    """
+    """Normalize [lon_min, lon_max, lat_min, lat_max] to lon in [-180, 180)."""
     lon0, lon1, lat0, lat1 = ext
     def norm_lon(x):
         return ((x + 180) % 360) - 180
     return [norm_lon(lon0), norm_lon(lon1), lat0, lat1]
+
+def ensure_lat_order(ext):
+    """Guarantee lat_min < lat_max to avoid blank maps when extents are inverted."""
+    lon0, lon1, lat0, lat1 = ext
+    if lat0 > lat1:
+        lat0, lat1 = lat1, lat0
+    return [lon0, lon1, lat0, lat1]
 
 def crosses_dateline(ext_norm):
     """True if the normalized extent crosses the dateline (i.e., west > east)."""
     lon0, lon1, _, _ = ext_norm
     return lon0 > lon1
 
-def to_lon360(x):
-    """Map longitude to [0, 360)."""
-    return x if x >= 0 else x + 360
+def to180(lon):
+    """Shift longitude into the 180-centered frame [-180,180)."""
+    return ((lon - 180 + 180) % 360) - 180
 
-def extent_to_lon360(ext_norm):
+def extent_to_180(ext_norm, eps=1e-6):
     """
-    Convert normalized extent to a [0,360) extent with west < east,
-    suitable for dateline-crossing windows like [170, 200].
+    Convert normalized extent (which crosses the dateline) into the 180-centered frame.
+    Add a tiny epsilon away from ±180 to avoid seam ambiguity.
     """
     lon0, lon1, lat0, lat1 = ext_norm
-    w = to_lon360(lon0)
-    e = to_lon360(lon1)
-    if e <= w:
-        e += 360.0
+    w = to180(lon0)
+    e = to180(lon1)
+    # After recentering, a crossing extent should become non-crossing
+    if w > e:
+        w, e = e, w
+    # nudge off the seam
+    if abs(w + 180) < 1e-5: w += eps
+    if abs(e - 180) < 1e-5: e -= eps
     return [w, e, lat0, lat1]
 
 # -------------------- Auto-thinning (softer, denser isobars) --------------------
@@ -113,23 +122,23 @@ def auto_plot_params(normed_extent, nx, ny):
     lat_span = abs(lat1 - lat0)
     span = max(lon_span, lat_span)
 
-    # Denser isobars than before
+    # Denser isobars
     if span >= 120:         # basin/hemisphere
         desired_x = 40
         barb_len  = 5
-        mslp_lw   = 0.9
+        mslp_lw   = 1.0
         coast_lw  = 0.9
         border_lw = 0.7
         state_lw  = 0.5
-        cint      = 3       # was 4 -> denser
+        cint      = 2       # denser than before
     elif span >= 60:        # sub-basin / multi-country
         desired_x = 55
         barb_len  = 6
-        mslp_lw   = 1.0
+        mslp_lw   = 1.1
         coast_lw  = 1.0
         border_lw = 0.8
         state_lw  = 0.6
-        cint      = 2       # was 3 -> denser
+        cint      = 2
     elif span >= 30:        # large region
         desired_x = 70
         barb_len  = 6
@@ -225,9 +234,8 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         # Time label
         date_str = read_valid_time(ds)
 
-        # Build both longitude domains:
-        #  - lon_360 increasing in [0,360)
-        lon_360 = lon0_360.copy()
+        # Build longitude domains
+        lon_360 = np.asarray(lon0_360)
         order_360 = np.argsort(lon_360)
         lon_360 = lon_360[order_360]
         mslp_360 = mslp[:, :, order_360]
@@ -235,7 +243,6 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         u10_360  = u10[:, :, order_360]
         v10_360  = v10[:, :, order_360]
 
-        #  - lon_m180 increasing in [-180,180)
         lon_m180 = np.where(lon_360 > 180, lon_360 - 360, lon_360)
         order_m180 = np.argsort(lon_m180)
         lon_m180 = lon_m180[order_m180]
@@ -244,75 +251,89 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         u10_m180  = u10_360[:, :, order_m180]
         v10_m180  = v10_360[:, :, order_m180]
 
-        # Normalize requested region
-        normed_extent = normalize_extent(region_coords)
-        is_crossing = crosses_dateline(normed_extent)
+        # Normalize & sanitize extent
+        normed_extent = ensure_lat_order(normalize_extent(region_coords))
+        crossing = crosses_dateline(normed_extent)
 
-        # Choose which longitude domain to use
-        if is_crossing:
-            # Use lon in 0..360 and an extent like [170, 200]
-            plot_lon = lon_360
-            plot_mslp = mslp_360
-            plot_d2m  = d2m_360
-            plot_u10  = u10_360
-            plot_v10  = v10_360
-            extent_360 = extent_to_lon360(normed_extent)  # [w,e,lat0,lat1] with w<e in 0..360
-            proj = ccrs.PlateCarree()                     # keep default projection
-            extent_crs = ccrs.PlateCarree()               # and default data CRS
-            west, east, lat0, lat1 = extent_360
-            # Matplotlib/Cartopy are fine with extents >180 here (e.g., [170, 200])
-            set_extent = [west, east, lat0, lat1]
-            data_crs = ccrs.PlateCarree()                 # data longitudes are 0..360
+        # Choose projection/coords cleanly
+        if crossing:
+            # 180-centered projection + data/extent in that frame
+            proj = ccrs.PlateCarree(central_longitude=180)
+            data_crs = ccrs.PlateCarree(central_longitude=180)
+
+            # Shift lon to 180-centered frame and add cyclic point to avoid seam gap
+            lon_180 = np.where(lon_360 >= 180, lon_360 - 360, lon_360)  # [-180,180)
+            lon_180_sorted = np.sort(lon_180)
+            # reorder all fields to match lon_180_sorted
+            idx = np.argsort(lon_180)
+            lon_180_sorted = lon_180[idx]
+            mslp_180 = mslp_360[:, :, idx]
+            d2m_180  = d2m_360[:, :, idx]
+            u10_180  = u10_360[:, :, idx]
+            v10_180  = v10_360[:, :, idx]
+
+            # add cyclic in lon for contourf/contour stability at seam
+            mslp_180_c, lon_180_c = add_cyclic_point(mslp_180[0, :, :], coord=lon_180_sorted)
+            d2m_180_c,  _         = add_cyclic_point(d2m_180[0, :, :],  coord=lon_180_sorted)
+            u10_180_c,  _         = add_cyclic_point(u10_180[0, :, :],  coord=lon_180_sorted)
+            v10_180_c,  _         = add_cyclic_point(v10_180[0, :, :],  coord=lon_180_sorted)
+
+            # extent in 180-centered frame with tiny epsilon off the seam
+            plot_extent = ensure_lat_order(extent_to_180(normed_extent, eps=1e-4))
+
+            # plotting lon/fields
+            plot_lon_1d = lon_180_c
+            mslp0 = mslp_180_c
+            d2m0  = d2m_180_c
+            u10_0 = u10_180_c
+            v10_0 = v10_180_c
+
         else:
-            # Use lon in [-180,180) and a standard extent
-            plot_lon = lon_m180
-            plot_mslp = mslp_m180
-            plot_d2m  = d2m_m180
-            plot_u10  = u10_m180
-            plot_v10  = v10_m180
+            # default 0-centered projection + [-180,180) data
             proj = ccrs.PlateCarree()
-            extent_crs = ccrs.PlateCarree()
-            set_extent = normed_extent
             data_crs = ccrs.PlateCarree()
+            plot_extent = normed_extent
+
+            plot_lon_1d = lon_m180
+            mslp0 = mslp_m180[0, :, :]
+            d2m0  = d2m_m180[0, :, :]
+            u10_0 = u10_m180[0, :, :]
+            v10_0 = v10_m180[0, :, :]
 
         # Convert dewpoint to °F
-        dewpoint_f = (plot_d2m - 273.15) * 9/5 + 32
+        dewpoint_f0 = (d2m0 - 273.15) * 9/5 + 32
 
         # Colormap
         cmap = create_custom_colormap()
 
         # Figure/Axes
         fig, ax = plt.subplots(figsize=(18, 9), subplot_kw={'projection': proj})
-        ax.set_extent(set_extent, crs=extent_crs)
+        ax.set_extent(plot_extent, crs=proj)  # extent expressed in the same CRS as projection
 
         # Auto-thinning + denser isobars
-        params = auto_plot_params(normed_extent, nx=plot_lon.size, ny=lat.size)
+        params = auto_plot_params(normed_extent, nx=plot_lon_1d.size, ny=lat.size)
 
-        # Map features
+        # Map features (drop STATES for global basins to avoid heavy draw)
         ax.set_facecolor('#C0C0C0')
         ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
-        ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
+        if not crossing:
+            ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
 
         # 2D coords for barbs
-        LON2, LAT2 = np.meshgrid(plot_lon, lat)
+        LON2, LAT2 = np.meshgrid(plot_lon_1d, lat)
 
-        # Isobars (denser)
-        mslp0 = plot_mslp[0, :, :]
+        # Isobars (denser, with safety cap on level count)
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
         mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
-        # guard rails: avoid >80 levels which can be slow on some hosts
-        max_levels = 60
         levels = np.arange(mmin, mmax + cint, cint)
-        if levels.size > max_levels:
-            skip = int(np.ceil(levels.size / max_levels))
-            levels = levels[::skip]
+        if levels.size > 80:
+            levels = levels[::2]  # thin the list, not the value spacing, to keep speed
 
         cs = ax.contour(
-            plot_lon, lat, mslp0,
-            levels=levels,
-            colors='black',
+            plot_lon_1d, lat, mslp0,
+            levels=levels, colors='black',
             linewidths=params['mslp_lw'],
             transform=data_crs
         )
@@ -320,7 +341,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         # Filled dewpoint
         dp_levels = np.linspace(-40, 90, 256)
         cf = ax.contourf(
-            plot_lon, lat, dewpoint_f[0, :, :],
+            plot_lon_1d, lat, dewpoint_f0,
             levels=dp_levels, cmap=cmap, extend='both',
             transform=data_crs
         )
@@ -330,7 +351,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
-            plot_u10[0, ::si, ::sj], plot_v10[0, ::si, ::sj],
+            u10_0[::si, ::sj], v10_0[::si, ::sj],
             length=params['barb_len'],
             transform=data_crs
         )
@@ -340,7 +361,6 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         cb.set_label('2m Dewpoint Temperature (°F)')
 
         # Title
-        date_str = read_valid_time(ds)
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
         # Save to buffer
