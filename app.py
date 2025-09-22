@@ -68,97 +68,62 @@ def create_custom_colormap():
     norm_colors = [(r/255, g/255, b/255) for r, g, b in colors]
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
-# -------------------- IDL-aware geo helpers --------------------
-def crosses_dateline(lon_west, lon_east):
-    """Check if a longitude range crosses the International Date Line."""
-    return lon_west > lon_east
+# -------------------- Geo helpers (IDL-safe) --------------------
+def to_pm180(lon):
+    """Map longitude to (-180, 180]; keep exact -180 at +180 for cleaner west<east logic."""
+    x = (lon + 180.0) % 360.0 - 180.0
+    return 180.0 if np.isclose(x, -180.0) else x
 
-def normalize_longitude_range(lon_west, lon_east):
-    """Normalize longitude range to handle IDL crossing."""
-    # Convert to 0-360 range first
-    lon_west = lon_west % 360
-    lon_east = lon_east % 360
-    
-    if crosses_dateline(lon_west, lon_east):
-        # For IDL crossing, we need to handle this specially
-        return lon_west, lon_east, True
-    else:
-        return lon_west, lon_east, False
+def extent_for_central180(ext):
+    """
+    Convert [lon_w, lon_e, lat_s, lat_n] (any range; may cross IDL) into an extent
+    suitable for PlateCarree(central_longitude=180) where west < east.
+    If the box crosses the IDL, we let east exceed +180 by adding 360.
+    """
+    lon_w, lon_e, lat_s, lat_n = ext
+    w = to_pm180(lon_w)
+    e = to_pm180(lon_e)
+    if lat_s > lat_n:
+        lat_s, lat_n = lat_n, lat_s
+    if e <= w:
+        e += 360.0
+    return [w, e, lat_s, lat_n]
 
-def get_projection_and_extent(region_coords):
-    """Get appropriate projection and extent for the region."""
-    lon_west, lon_east, lat_south, lat_north = region_coords
-    
-    # Normalize coordinates
-    lon_west_norm, lon_east_norm, crosses_idl = normalize_longitude_range(lon_west, lon_east)
-    
-    if crosses_idl:
-        # Use central longitude of 180 for IDL crossing
-        central_lon = 180.0
-        proj = ccrs.PlateCarree(central_longitude=central_lon)
-        
-        # Convert extent to -180 to 180 range centered on 180
-        extent_west = lon_west_norm - 360 if lon_west_norm > 180 else lon_west_norm
-        extent_east = lon_east_norm if lon_east_norm <= 180 else lon_east_norm
-        
-        # Ensure west < east in the transformed coordinates
-        if extent_west >= extent_east:
-            extent_east += 360
-            
-        extent = [extent_west, extent_east, lat_south, lat_north]
-    else:
-        # Standard case - use central longitude in the middle of the region
-        central_lon = (lon_west + lon_east) / 2
-        if central_lon > 180:
-            central_lon -= 360
-        elif central_lon < -180:
-            central_lon += 360
-            
-        proj = ccrs.PlateCarree(central_longitude=central_lon)
-        
-        # Convert extent to appropriate range
-        extent_west = lon_west if lon_west <= 180 else lon_west - 360
-        extent_east = lon_east if lon_east <= 180 else lon_east - 360
-        
-        extent = [extent_west, extent_east, lat_south, lat_north]
-    
-    return proj, extent, crosses_idl
+def crosses_idl_raw(ext):
+    """Return True if [lon_w, lon_e, ...] crosses the IDL in (-180,180] space."""
+    lon_w, lon_e, *_ = ext
+    w = to_pm180(lon_w)
+    e = to_pm180(lon_e)
+    return e <= w
 
-def get_data_subset(lon_data, lat_data, region_coords, data_arrays):
-    """Get data subset for the region, handling IDL crossing."""
-    lon_west, lon_east, lat_south, lat_north = region_coords
-    lon_west_norm, lon_east_norm, crosses_idl = normalize_longitude_range(lon_west, lon_east)
-    
-    # Handle latitude (ensure proper order)
-    lat_min, lat_max = min(lat_south, lat_north), max(lat_south, lat_north)
-    lat_mask = (lat_data >= lat_min) & (lat_data <= lat_max)
-    
-    # Handle longitude
-    if crosses_idl:
-        # For IDL crossing, select points west of IDL OR east of IDL
-        lon_mask = (lon_data >= lon_west_norm) | (lon_data <= lon_east_norm)
+def span_from_extent180(ext180):
+    """Longitudinal span for extents in central_longitude=180 frame."""
+    w, e, _, _ = ext180
+    return (e - w) if e >= w else (e + 360.0 - w)
+
+def lon360_in_extent180_mask(lon360, ext180):
+    """
+    Mask longitudes in [0,360) that fall inside an extent defined for
+    PlateCarree(central_longitude=180). Handles IDL crossing by unwrapping.
+    """
+    w, e, _, _ = ext180
+    lon_c180 = ((lon360 + 180.0) % 360.0) - 180.0
+    if e > 180.0:
+        lon_unwrapped = np.where(lon_c180 < w, lon_c180 + 360.0, lon_c180)
     else:
-        # Standard case
-        lon_mask = (lon_data >= lon_west_norm) & (lon_data <= lon_east_norm)
-    
-    # Apply masks
-    lat_subset = lat_data[lat_mask]
-    lon_subset = lon_data[lon_mask]
-    
-    # Subset data arrays
-    data_subset = {}
-    for name, data in data_arrays.items():
-        if data.ndim == 3:  # time, lat, lon
-            data_subset[name] = data[:, lat_mask, :][:, :, lon_mask]
-        elif data.ndim == 2:  # lat, lon
-            data_subset[name] = data[lat_mask, :][:, lon_mask]
-    
-    return lon_subset, lat_subset, data_subset
+        lon_unwrapped = lon_c180
+    return (lon_unwrapped >= w) & (lon_unwrapped <= e)
+
+def lat_mask_for_extent(lat, ext180):
+    """Mask latitude array (which may be descending) to [lat_s, lat_n]."""
+    _, _, s, n = ext180
+    lo, hi = min(s, n), max(s, n)
+    return (lat >= lo) & (lat <= hi) if lat[0] < lat[-1] else (lat <= hi) & (lat >= lo)
 
 # -------------------- Auto-thinning (softer + denser isobars) --------------------
-def auto_plot_params(extent, nx, ny):
-    lon_span = abs(extent[1] - extent[0])
-    lat_span = abs(extent[3] - extent[2])
+def auto_plot_params(ext180, nx, ny):
+    lon_span = span_from_extent180(ext180)
+    lat_span = abs(ext180[3] - ext180[2])
     span = max(lon_span, lat_span)
 
     if span >= 120:         # basin/hemisphere
@@ -227,66 +192,56 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         d2m  = ds.variables['d2m'][:]          # K
         u10  = ds.variables['u10'][:]
         v10  = ds.variables['v10'][:]
-        lon_data = ds.variables['longitude'][:]
-        lat_data = ds.variables['latitude'][:]
+        lon0 = ds.variables['longitude'][:]
+        lat  = ds.variables['latitude'][:]
 
-        # Ensure longitude is in 0-360 range and sorted
-        lon_data = np.asarray(lon_data) % 360
-        sort_idx = np.argsort(lon_data)
-        lon_data = lon_data[sort_idx]
-        
-        # Sort all data arrays by longitude
-        mslp = mslp[:, :, sort_idx]
-        d2m = d2m[:, :, sort_idx]
-        u10 = u10[:, :, sort_idx]
-        v10 = v10[:, :, sort_idx]
+        # sort longitude strictly increasing in 0..360
+        lon_360 = np.asarray(lon0)
+        order = np.argsort(lon_360)
+        lon_360 = lon_360[order]
+        mslp = mslp[:, :, order]
+        d2m  = d2m[:,  :, order]
+        u10  = u10[:,  :, order]
+        v10  = v10[:,  :, order]
 
-        # Get appropriate projection and extent
-        proj, extent, crosses_idl = get_projection_and_extent(region_coords)
-        
-        # Get data subset for the region
-        data_arrays = {
-            'mslp': mslp,
-            'd2m': d2m,
-            'u10': u10,
-            'v10': v10
-        }
-        
-        lon_subset, lat_subset, data_subset = get_data_subset(
-            lon_data, lat_data, region_coords, data_arrays
-        )
+        # build extent for a dateline-centered view
+        extent180 = extent_for_central180(region_coords)
+        # detect if requested box crosses IDL
+        crosses_idl = crosses_idl_raw(region_coords)
 
-        # Convert longitude to plotting coordinates if needed
-        if crosses_idl:
-            # Convert to -180 to 180 range for plotting
-            lon_plot = np.where(lon_subset > 180, lon_subset - 360, lon_subset)
-            # Sort again if needed
-            if not np.all(lon_plot[:-1] <= lon_plot[1:]):
-                sort_idx = np.argsort(lon_plot)
-                lon_plot = lon_plot[sort_idx]
-                for key in data_subset:
-                    if data_subset[key].ndim == 3:
-                        data_subset[key] = data_subset[key][:, :, sort_idx]
-                    elif data_subset[key].ndim == 2:
-                        data_subset[key] = data_subset[key][:, sort_idx]
-        else:
-            lon_plot = lon_subset
+        # ---- SUBSET THE GRID TO THE VIEW WINDOW (fixes clutter & aspect) ----
+        # longitude mask
+        mask_lon = lon360_in_extent180_mask(lon_360, extent180)
+        # latitude mask
+        mask_lat = lat_mask_for_extent(lat, extent180)
 
-        # Convert dewpoint to °F
-        dewpoint_f = (data_subset['d2m'] - 273.15) * 9/5 + 32
+        lon_sub = lon_360[mask_lon]
+        lat_sub = lat[mask_lat]
+
+        mslp_sub = mslp[:, mask_lat, :][:, :, mask_lon]
+        d2m_sub  = d2m[:,  mask_lat, :][:, :, mask_lon]
+        u10_sub  = u10[:,  mask_lat, :][:, :, mask_lon]
+        v10_sub  = v10[:,  mask_lat, :][:, :, mask_lon]
+
+        # convert dewpoint to °F
+        dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
 
         # colormap and title time
         cmap = create_custom_colormap()
         date_str = read_valid_time(ds)
 
-        # Create figure
+        # ---- Projection setup (axes centered on IDL for consistency) ----
+        proj = ccrs.PlateCarree(central_longitude=180)
+        extent_crs = ccrs.PlateCarree(central_longitude=180)
+
+        # figure/axes
         fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
-        ax.set_extent(extent, crs=proj)
+        ax.set_extent(extent180, crs=extent_crs)
 
-        # Auto-thin based on subset size
-        params = auto_plot_params(extent, nx=lon_plot.size, ny=lat_subset.size)
+        # auto-thin based on **subset** size (not global)
+        params = auto_plot_params(extent180, nx=lon_sub.size, ny=lat_sub.size)
 
-        # Map features
+        # map features
         ax.set_facecolor('#C0C0C0')
         ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
@@ -295,65 +250,122 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         except Exception:
             pass
 
-        # Create meshgrid for plotting
-        LON2, LAT2 = np.meshgrid(lon_plot, lat_subset)
+        # -------------------- Plotting branch --------------------
+        if crosses_idl:
+            # Re-project subset longitudes to (-180,180] and sort
+            lon_sub180 = ((lon_sub + 180.0) % 360.0) - 180.0
+            lon_sub180 = np.where(np.isclose(lon_sub180, -180.0), 180.0, lon_sub180)
+            ix = np.argsort(lon_sub180)
+            lon_sub180 = lon_sub180[ix]
+            mslp_sub = mslp_sub[:, :, ix]
+            dewpoint_f = dewpoint_f[:, :, ix]
+            u10_sub = u10_sub[:, :, ix]
+            v10_sub = v10_sub[:, :, ix]
 
-        # Plot pressure contours
-        mslp_plot = data_subset['mslp'][0, :, :]
-        cint = params['cint']
-        mmin = np.floor(np.nanmin(mslp_plot) / cint) * cint
-        mmax = np.ceil(np.nanmax(mslp_plot) / cint) * cint
-        levels = np.arange(mmin, mmax + cint, cint)
-        if levels.size > 60:
-            skip = int(np.ceil(levels.size / 60))
-            levels = levels[::skip]
+            data_crs = ccrs.PlateCarree(central_longitude=180)
 
-        ax.contour(
-            LON2, LAT2, mslp_plot,
-            levels=levels, colors='black',
-            linewidths=params['mslp_lw'],
-            transform=ccrs.PlateCarree()
-        )
+            # 2D grid for barbs
+            LON2, LAT2 = np.meshgrid(lon_sub180, lat_sub)
 
-        # Plot filled dewpoint
-        dp_plot = dewpoint_f[0, :, :]
-        
-        # Add cyclic point if needed for IDL crossing
-        if crosses_idl and len(lon_plot) > 1:
-            dp_cyc, lon_cyc = add_cyclic_point(dp_plot, coord=lon_plot)
-            cf = ax.contourf(
-                lon_cyc, lat_subset, dp_cyc,
-                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
-                transform=ccrs.PlateCarree()
+            # Isobars
+            mslp0 = mslp_sub[0, :, :]
+            cint = params['cint']
+            mmin = np.floor(np.nanmin(mslp0) / cint) * cint
+            mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
+            levels = np.arange(mmin, mmax + cint, cint)
+            if levels.size > 60:
+                skip = int(np.ceil(levels.size / 60))
+                levels = levels[::skip]
+
+            ax.contour(
+                lon_sub180, lat_sub, mslp0,
+                levels=levels, colors='black',
+                linewidths=params['mslp_lw'],
+                transform=data_crs
             )
+
+            # Filled dewpoint: add cyclic only if we actually touch the seam
+            dp_slice = dewpoint_f[0, :, :]
+            touches_west = np.isclose(lon_sub180.min(), -180.0) | np.isclose(lon_sub180.min(), 180.0)
+            touches_east = np.isclose(lon_sub180.max(), 180.0)
+            if touches_west or touches_east:
+                dp_slice, lon_cyc = add_cyclic_point(dp_slice, coord=lon_sub180)
+                lon_for_fill = lon_cyc
+            else:
+                lon_for_fill = lon_sub180
+
+            cf = ax.contourf(
+                lon_for_fill, lat_sub, dp_slice,
+                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+                transform=data_crs
+            )
+
+            # Wind barbs (thinned)
+            si = params['stride_y']; sj = params['stride_x']
+            ax.barbs(
+                LON2[::si, ::sj], LAT2[::si, ::sj],
+                u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
+                length=params['barb_len'],
+                transform=data_crs
+            )
+
         else:
-            cf = ax.contourf(
-                LON2, LAT2, dp_plot,
-                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
-                transform=ccrs.PlateCarree()
+            # Non-IDL case: keep 0..360° data frame and use standard PlateCarree
+            data_crs = ccrs.PlateCarree()
+
+            # 2D grid for barbs
+            LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
+
+            # Isobars
+            mslp0 = mslp_sub[0, :, :]
+            cint = params['cint']
+            mmin = np.floor(np.nanmin(mslp0) / cint) * cint
+            mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
+            levels = np.arange(mmin, mmax + cint, cint)
+            if levels.size > 60:
+                skip = int(np.ceil(levels.size / 60))
+                levels = levels[::skip]
+
+            ax.contour(
+                lon_sub, lat_sub, mslp0,
+                levels=levels, colors='black',
+                linewidths=params['mslp_lw'],
+                transform=data_crs
             )
 
-        # Wind barbs
-        si = params['stride_y']
-        sj = params['stride_x']
-        ax.barbs(
-            LON2[::si, ::sj], LAT2[::si, ::sj],
-            data_subset['u10'][0, ::si, ::sj], data_subset['v10'][0, ::si, ::sj],
-            length=params['barb_len'],
-            transform=ccrs.PlateCarree()
-        )
+            # Filled dewpoint (no cyclic needed; not touching seam)
+            dp_slice = dewpoint_f[0, :, :]
+            cf = ax.contourf(
+                lon_sub, lat_sub, dp_slice,
+                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+                transform=data_crs
+            )
 
-        # Colorbar and title
+            # Wind barbs (thinned)
+            si = params['stride_y']; sj = params['stride_x']
+            ax.barbs(
+                LON2[::si, ::sj], LAT2[::si, ::sj],
+                u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
+                length=params['barb_len'],
+                transform=data_crs
+            )
+
+        # Optional: prevent hairline edges between filled contour polygons
+        for col in cf.collections:
+            col.set_edgecolor('face')
+            col.set_linewidth(0)
+
+        # colorbar and title
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
         cb.set_label('2m Dewpoint Temperature (°F)')
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
-        # Save to buffer
+        # save to buffer
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
 
-        # Cleanup
+        # cleanup
         ds.close()
         plt.close(fig)
         return buffer
