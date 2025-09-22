@@ -70,14 +70,10 @@ def create_custom_colormap():
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
 # -------------------- Dateline-safe math by recentering --------------------
-def mod360(x):  # keep degrees in [0,360)
+def mod360(x):
     return (np.asarray(x) % 360.0 + 360.0) % 360.0
 
 def shortest_arc_mid(lw, le):
-    """
-    Given lon_w, lon_e (any range), find the midpoint along the shortest arc on a circle.
-    Returns center in degrees (0..360), plus unwrapped w,e in that same frame with w<e.
-    """
     w = mod360(lw); e = mod360(le)
     d = (e - w) % 360.0
     if d <= 180.0:
@@ -90,29 +86,20 @@ def shortest_arc_mid(lw, le):
     return center, w_u, e_u
 
 def build_projection_and_extent(lon_w, lon_e, lat_s, lat_n):
-    """
-    Choose central_longitude = arc midpoint so the seam is outside the window.
-    Return (proj_axes, proj_extent_crs, extent_in_that_crs, center_deg)
-    """
     s, n = (lat_s, lat_n) if lat_s <= lat_n else (lat_n, lat_s)
     center, w_u, e_u = shortest_arc_mid(lon_w, lon_e)
 
     def to_center_frame(lon):
-        # 0..360 → (-180..180] relative to center
         return ((lon - center + 180.0) % 360.0) - 180.0
 
     w_c = to_center_frame(w_u)
-    e_c = to_center_frame(e_u)  # w_c < e_c by construction
+    e_c = to_center_frame(e_u)  # guaranteed w_c < e_c
     proj = ccrs.PlateCarree(central_longitude=float(center))
     extent_crs = ccrs.PlateCarree(central_longitude=float(center))
     extent = [w_c, e_c, s, n]
-    return proj, extent_crs, extent, center
+    return proj, extent_crs, extent, float(center)
 
 def subset_lon_lat(lon_360, lat, data3d, lon_w, lon_e, lat_s, lat_n):
-    """
-    Subset data to requested box along the shortest arc, return lon in degrees east [-180,180)
-    relative to standard PlateCarree data CRS (central_longitude=0).
-    """
     lon_pm180 = ((lon_360 + 180.0) % 360.0) - 180.0
     s, n = (lat_s, lat_n) if lat_s <= lat_n else (lat_n, lat_s)
     center, w_u, e_u = shortest_arc_mid(lon_w, lon_e)
@@ -135,7 +122,6 @@ def subset_lon_lat(lon_360, lat, data3d, lon_w, lon_e, lat_s, lat_n):
     return lon_sel, lat_sel, sub
 
 def ensure_increasing_axes(lon1d, lat1d, *fields):
-    """Flip arrays so lon & lat are strictly increasing; flip matching axes on fields."""
     lon_up, lat_up = lon1d, lat1d
     out = list(fields)
     if lon_up[0] > lon_up[-1]:
@@ -146,14 +132,18 @@ def ensure_increasing_axes(lon1d, lat1d, *fields):
         out = [np.ascontiguousarray(f[:, ::-1, :]) for f in out]
     return (lon_up, lat_up, *out)
 
+# ---- NEW: recenter longitudes for plotting to the map's central_longitude ----
+def to_center_frame_vec(lon_pm180, center_deg):
+    """Convert standard lon in [-180,180) to the centered frame (-180..180] for plotting."""
+    return ((lon_pm180 - center_deg + 180.0) % 360.0) - 180.0
+
 # -------------------- Zoom-aware density & intervals --------------------
 def auto_plot_params(extent, nx, ny):
     w, e, s, n = extent
-    lon_span = e - w               # already guaranteed e>w in our centered frame
+    lon_span = e - w
     lat_span = abs(n - s)
     span = max(lon_span, lat_span)
 
-    # zoomed OUT: tighter isobars; zoomed IN: wider isobars + sparser barbs
     if span >= 120:
         desired_x = 40; barb_len = 5
         barb_min_stride = 7
@@ -169,7 +159,7 @@ def auto_plot_params(extent, nx, ny):
         barb_min_stride = 6
         mslp_lw = 1.05; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
         cint = 3
-    else:  # zoomed-in (e.g., CONUS)
+    else:
         desired_x = 85; barb_len = 6
         barb_min_stride = 6
         mslp_lw = 1.1; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
@@ -245,7 +235,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         lon_w, lon_e, lat_s, lat_n = region_coords
 
         # projection centered to the window midpoint (IDL-proof)
-        proj, extent_crs, extent_centered, _center = build_projection_and_extent(lon_w, lon_e, lat_s, lat_n)
+        proj, extent_crs, extent_centered, center_deg = build_projection_and_extent(lon_w, lon_e, lat_s, lat_n)
 
         # subset window (no cyclic padding needed)
         lon_sel, lat_sel, mslp_sub = subset_lon_lat(lon_360, lat, mslp, lon_w, lon_e, lat_s, lat_n)
@@ -253,22 +243,27 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         _,       _,       u10_sub  = subset_lon_lat(lon_360, lat, u10,  lon_w, lon_e, lat_s, lat_n)
         _,       _,       v10_sub  = subset_lon_lat(lon_360, lat, v10,  lon_w, lon_e, lat_s, lat_n)
 
-        # ensure monotonic increasing axes to avoid contour artifacts
-        lon_sel, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub = ensure_increasing_axes(
-            lon_sel, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub
+        # ---- recenter selected longitudes to the map's center and then enforce monotonic axes
+        lon_plot = to_center_frame_vec(lon_sel, center_deg)
+
+        # tiny epsilon to avoid duplicate-edge issues exactly at +/-180
+        lon_plot = np.where(np.isclose(np.diff(np.r_[lon_plot[0]-1e-8, lon_plot]), 0.0), lon_plot + 1e-8, lon_plot)
+
+        lon_plot, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub = ensure_increasing_axes(
+            lon_plot, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub
         )
 
         dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
         cmap = create_custom_colormap()
         date_str = read_valid_time(ds)
 
-        data_crs = ccrs.PlateCarree()  # data in lon/lat (east positive)
+        data_crs_centered = ccrs.PlateCarree(central_longitude=center_deg)
 
         # figure/axes
         fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
         ax.set_extent(extent_centered, crs=extent_crs)
 
-        params = auto_plot_params(extent_centered, nx=lon_sel.size, ny=lat_sel.size)
+        params = auto_plot_params(extent_centered, nx=lon_plot.size, ny=lat_sel.size)
 
         # map features
         ax.set_facecolor('#C0C0C0')
@@ -280,10 +275,10 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             pass
 
         # mesh for barbs
-        LON2, LAT2 = np.meshgrid(lon_sel, lat_sel)
+        LON2, LAT2 = np.meshgrid(lon_plot, lat_sel)
 
         # isobars
-        mslp0 = mslp_sub[0, :, :]
+        mslp0 = np.ascontiguousarray(mslp_sub[0, :, :])
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
         mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
@@ -293,17 +288,17 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             levels = levels[::skip]
 
         ax.contour(
-            lon_sel, lat_sel, mslp0,
+            lon_plot, lat_sel, mslp0,
             levels=levels, colors='black',
             linewidths=params['mslp_lw'],
-            transform=data_crs
+            transform=data_crs_centered
         )
 
-        # filled dewpoint (no cyclic needed because seam is outside)
+        # filled dewpoint (now in the same centered frame)
         cf = ax.contourf(
-            lon_sel, lat_sel, dewpoint_f[0, :, :],
+            lon_plot, lat_sel, dewpoint_f[0, :, :],
             levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
-            transform=data_crs
+            transform=data_crs_centered
         )
 
         # wind barbs (zoom-aware thinning)
@@ -312,7 +307,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             LON2[::si, ::sj],      LAT2[::si, ::sj],
             u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
             length=params['barb_len'],
-            transform=data_crs
+            transform=data_crs_centered
         )
 
         # colorbar + title
