@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from cartopy.util import add_cyclic_point
+# from cartopy.util import add_cyclic_point  # not needed anymore
 import os
 import tempfile
 from datetime import datetime
@@ -72,7 +72,7 @@ def create_custom_colormap():
     norm_colors = [(r/255, g/255, b/255) for r, g, b in colors]
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
-# -------------------- Geo helpers (IDL-safe) --------------------
+# -------------------- Geo + IDL helpers --------------------
 def norm_pm180(lon):
     """Normalize any lon to (-180, 180]; keep exact -180 at +180."""
     x = (lon + 180.0) % 360.0 - 180.0
@@ -104,25 +104,6 @@ def extent_for_central180(ext):
 def span_from_extent180(ext180):
     w, e, _, _ = ext180
     return (e - w) if e >= w else (e + 360.0 - w)
-
-def lon360_in_extent180_mask(lon360, ext180):
-    """
-    Mask longitudes in [0,360) that fall inside an extent defined for
-    PlateCarree(central_longitude=180). Handles IDL crossing by unwrapping.
-    """
-    w, e, _, _ = ext180
-    lon_c180 = ((lon360 + 180.0) % 360.0) - 180.0
-    if e > 180.0:
-        lon_unwrapped = np.where(lon_c180 < w, lon_c180 + 360.0, lon_c180)
-    else:
-        lon_unwrapped = lon_c180
-    return (lon_unwrapped >= w) & (lon_unwrapped <= e)
-
-def lat_mask_for_extent(lat, ext180):
-    """Mask latitude array (which may be descending) to [lat_s, lat_n]."""
-    _, _, s, n = ext180
-    lo, hi = min(s, n), max(s, n)
-    return (lat >= lo) & (lat <= hi) if lat[0] < lat[-1] else (lat <= hi) & (lat >= lo)
 
 # -------------------- CDS area helpers (subset + stitch) --------------------
 def areas_for_cds(ext):
@@ -159,7 +140,32 @@ def concat_lon_slices(lon_list, arr_list):
     data_sorted = data_all[..., order]
     return lon_sorted, data_sorted
 
-# -------------------- Auto-thinning (softer + denser isobars) --------------------
+def drop_duplicate_lons(lon1d, arrays, tol=1e-9):
+    """
+    Remove duplicate/near-duplicate longitudes to keep spacing consistent.
+    arrays: list of arrays with last dim = lon
+    """
+    lon = lon1d.copy()
+    keep = np.ones_like(lon, dtype=bool)
+    keep[1:] = np.abs(np.diff(lon)) > tol
+    lon = lon[keep]
+    out = [a[..., keep] for a in arrays]
+    return lon, out
+
+def make_cyclic(lon1d, field2d):
+    """
+    Manually add a cyclic column without requiring exact equal spacing checks.
+    lon1d: shape (L,)
+    field2d: shape (lat, lon)
+    """
+    diffs = np.diff(lon1d)
+    # Use median step; fallback to first diff if needed
+    step = np.median(diffs) if diffs.size else 360.0
+    lon_ext = np.concatenate([lon1d, [lon1d[-1] + step]])
+    field_ext = np.concatenate([field2d, field2d[:, :1]], axis=1)
+    return lon_ext, field_ext
+
+# -------------------- Auto-thinning (isobars/winds) --------------------
 def auto_plot_params(ext180, nx, ny):
     lon_span = span_from_extent180(ext180)
     lat_span = abs(ext180[3] - ext180[2])
@@ -198,7 +204,7 @@ def read_valid_time(ds):
 
 # -------------------- Main renderer --------------------
 def generate_visualization(year, month, day, hour, region_coords, api_key):
-    """Generate the ERA5 visualization (CDS-subset + IDL robust)."""
+    """Generate the ERA5 visualization (CDS-subset + IDL robust, no equal-spacing dependency)."""
     date_input = f"{year:04}{month:02}{day:02}{hour:02}"
 
     # CDS API client
@@ -283,6 +289,11 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         _,       u10_all  = concat_lon_slices(lon_chunks, u10_chunks)
         _,       v10_all  = concat_lon_slices(lon_chunks, v10_chunks)
 
+        # Drop any accidental duplicate longitudes (rare but can happen on tile edges)
+        lon_all, [mslp_all, d2m_all, u10_all, v10_all] = drop_duplicate_lons(
+            lon_all, [mslp_all, d2m_all, u10_all, v10_all]
+        )
+
         # Build extent for a dateline-centered view (for map set_extent)
         extent180 = extent_for_central180(region_coords)
 
@@ -314,17 +325,14 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         except Exception:
             pass
 
-        # 2D grid for barbs
-        LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
-
         # Determine if subset crosses/touches the 0/360 seam
         touches_seam = crosses_dateline_box(region_coords[0], region_coords[1])
 
-        # ----- Filled dewpoint (use cyclic when touching seam) -----
-        dp_slice = dewpoint_f[0, :, :]
-        lon_for_fill = lon_sub
+        # ----- Filled dewpoint (manual cyclic when touching seam) -----
+        dp_slice = dewpoint_f[0, :, :]  # (lat, lon)
+        lon_for_fill = lon_sub.copy()
         if touches_seam:
-            dp_slice, lon_for_fill = add_cyclic_point(dp_slice, coord=lon_for_fill)
+            lon_for_fill, dp_slice = make_cyclic(lon_for_fill, dp_slice)
 
         cf = ax.contourf(
             lon_for_fill, lat_sub, dp_slice,
@@ -333,8 +341,8 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
-        # ----- Isobars (also cyclic when touching seam) -----
-        mslp0 = mslp_all[0, :, :]
+        # ----- Isobars (manual cyclic when touching seam) -----
+        mslp0 = mslp_all[0, :, :]  # (lat, lon)
         mmin = np.floor(np.nanmin(mslp0) / params['cint']) * params['cint']
         mmax = np.ceil(np.nanmax(mslp0) / params['cint']) * params['cint']
         levels = np.arange(mmin, mmax + params['cint'], params['cint'])
@@ -343,9 +351,9 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             levels = levels[::skip]
 
         mslp_field = mslp0
-        lon_for_contour = lon_sub
+        lon_for_contour = lon_sub.copy()
         if touches_seam:
-            mslp_field, lon_for_contour = add_cyclic_point(mslp_field, coord=lon_for_contour)
+            lon_for_contour, mslp_field = make_cyclic(lon_for_contour, mslp_field)
 
         ax.contour(
             lon_for_contour, lat_sub, mslp_field,
@@ -354,8 +362,9 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
-        # wind barbs (thinned by subset-based strides)
+        # wind barbs (no need to cyclic-wrap)
         si = params['stride_y']; sj = params['stride_x']
+        LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
             u10_all[0, ::si, ::sj], v10_all[0, ::si, ::sj],
