@@ -89,13 +89,6 @@ def extent_for_central180(ext):
         e += 360.0
     return [w, e, lat_s, lat_n]
 
-def crosses_idl_raw(ext):
-    """Return True if [lon_w, lon_e, ...] crosses the IDL in (-180,180] space."""
-    lon_w, lon_e, *_ = ext
-    w = to_pm180(lon_w)
-    e = to_pm180(lon_e)
-    return e <= w
-
 def span_from_extent180(ext180):
     """Longitudinal span for extents in central_longitude=180 frame."""
     w, e, _, _ = ext180
@@ -107,7 +100,9 @@ def lon360_in_extent180_mask(lon360, ext180):
     PlateCarree(central_longitude=180). Handles IDL crossing by unwrapping.
     """
     w, e, _, _ = ext180
+    # Map lon360 to (-180, 180]
     lon_c180 = ((lon360 + 180.0) % 360.0) - 180.0
+    # If e>180 we "unwrap" by adding 360 to values < w so the interval is [w, e] in a monotone axis
     if e > 180.0:
         lon_unwrapped = np.where(lon_c180 < w, lon_c180 + 360.0, lon_c180)
     else:
@@ -206,8 +201,6 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 
         # build extent for a dateline-centered view
         extent180 = extent_for_central180(region_coords)
-        # detect if requested box crosses IDL
-        crosses_idl = crosses_idl_raw(region_coords)
 
         # ---- SUBSET THE GRID TO THE VIEW WINDOW (fixes clutter & aspect) ----
         # longitude mask
@@ -230,9 +223,10 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         cmap = create_custom_colormap()
         date_str = read_valid_time(ds)
 
-        # ---- Projection setup (axes centered on IDL for consistency) ----
+        # ---- Projection setup (IDL-safe) ----
         proj = ccrs.PlateCarree(central_longitude=180)
         extent_crs = ccrs.PlateCarree(central_longitude=180)
+        data_crs = ccrs.PlateCarree()  # data are in geographic lon/lat with lon in 0..360
 
         # figure/axes
         fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
@@ -250,110 +244,50 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         except Exception:
             pass
 
-        # -------------------- Plotting branch --------------------
-        if crosses_idl:
-            # Re-project subset longitudes to (-180,180] and sort
-            lon_sub180 = ((lon_sub + 180.0) % 360.0) - 180.0
-            lon_sub180 = np.where(np.isclose(lon_sub180, -180.0), 180.0, lon_sub180)
-            ix = np.argsort(lon_sub180)
-            lon_sub180 = lon_sub180[ix]
-            mslp_sub = mslp_sub[:, :, ix]
-            dewpoint_f = dewpoint_f[:, :, ix]
-            u10_sub = u10_sub[:, :, ix]
-            v10_sub = v10_sub[:, :, ix]
+        # 2D grid for barbs
+        LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
 
-            data_crs = ccrs.PlateCarree(central_longitude=180)
+        # isobars (denser, with guard on total level count)
+        mslp0 = mslp_sub[0, :, :]
+        cint = params['cint']
+        mmin = np.floor(np.nanmin(mslp0) / cint) * cint
+        mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
+        levels = np.arange(mmin, mmax + cint, cint)
+        if levels.size > 60:
+            skip = int(np.ceil(levels.size / 60))
+            levels = levels[::skip]
 
-            # 2D grid for barbs
-            LON2, LAT2 = np.meshgrid(lon_sub180, lat_sub)
+        ax.contour(
+            lon_sub, lat_sub, mslp0,
+            levels=levels, colors='black',
+            linewidths=params['mslp_lw'],
+            transform=data_crs
+        )
 
-            # Isobars
-            mslp0 = mslp_sub[0, :, :]
-            cint = params['cint']
-            mmin = np.floor(np.nanmin(mslp0) / cint) * cint
-            mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
-            levels = np.arange(mmin, mmax + cint, cint)
-            if levels.size > 60:
-                skip = int(np.ceil(levels.size / 60))
-                levels = levels[::skip]
+        # filled dewpoint (add cyclic column only if the subset still touches the seam)
+        lon_for_fill = lon_sub
+        dp_slice = dewpoint_f[0, :, :]
+        # Determine if subset spans 0/360 seam in lon_360
+        spans_seam = (np.max(np.diff(np.sort(lon_sub))) > 5) and (lon_sub[0] < 20 or lon_sub[-1] > 340)
+        if spans_seam:
+            dp_cyc, lon_cyc = add_cyclic_point(dp_slice, coord=lon_sub)
+            lon_for_fill = lon_cyc
+            dp_slice = dp_cyc
 
-            ax.contour(
-                lon_sub180, lat_sub, mslp0,
-                levels=levels, colors='black',
-                linewidths=params['mslp_lw'],
-                transform=data_crs
-            )
+        cf = ax.contourf(
+            lon_for_fill, lat_sub, dp_slice,
+            levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+            transform=data_crs
+        )
 
-            # Filled dewpoint: add cyclic only if we actually touch the seam
-            dp_slice = dewpoint_f[0, :, :]
-            touches_west = np.isclose(lon_sub180.min(), -180.0) | np.isclose(lon_sub180.min(), 180.0)
-            touches_east = np.isclose(lon_sub180.max(), 180.0)
-            if touches_west or touches_east:
-                dp_slice, lon_cyc = add_cyclic_point(dp_slice, coord=lon_sub180)
-                lon_for_fill = lon_cyc
-            else:
-                lon_for_fill = lon_sub180
-
-            cf = ax.contourf(
-                lon_for_fill, lat_sub, dp_slice,
-                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
-                transform=data_crs
-            )
-
-            # Wind barbs (thinned)
-            si = params['stride_y']; sj = params['stride_x']
-            ax.barbs(
-                LON2[::si, ::sj], LAT2[::si, ::sj],
-                u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
-                length=params['barb_len'],
-                transform=data_crs
-            )
-
-        else:
-            # Non-IDL case: keep 0..360° data frame and use standard PlateCarree
-            data_crs = ccrs.PlateCarree()
-
-            # 2D grid for barbs
-            LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
-
-            # Isobars
-            mslp0 = mslp_sub[0, :, :]
-            cint = params['cint']
-            mmin = np.floor(np.nanmin(mslp0) / cint) * cint
-            mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
-            levels = np.arange(mmin, mmax + cint, cint)
-            if levels.size > 60:
-                skip = int(np.ceil(levels.size / 60))
-                levels = levels[::skip]
-
-            ax.contour(
-                lon_sub, lat_sub, mslp0,
-                levels=levels, colors='black',
-                linewidths=params['mslp_lw'],
-                transform=data_crs
-            )
-
-            # Filled dewpoint (no cyclic needed; not touching seam)
-            dp_slice = dewpoint_f[0, :, :]
-            cf = ax.contourf(
-                lon_sub, lat_sub, dp_slice,
-                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
-                transform=data_crs
-            )
-
-            # Wind barbs (thinned)
-            si = params['stride_y']; sj = params['stride_x']
-            ax.barbs(
-                LON2[::si, ::sj], LAT2[::si, ::sj],
-                u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
-                length=params['barb_len'],
-                transform=data_crs
-            )
-
-        # Optional: prevent hairline edges between filled contour polygons
-        for col in cf.collections:
-            col.set_edgecolor('face')
-            col.set_linewidth(0)
+        # wind barbs (thinned by subset-based strides)
+        si = params['stride_y']; sj = params['stride_x']
+        ax.barbs(
+            LON2[::si, ::sj], LAT2[::si, ::sj],
+            u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
+            length=params['barb_len'],
+            transform=data_crs
+        )
 
         # colorbar and title
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
