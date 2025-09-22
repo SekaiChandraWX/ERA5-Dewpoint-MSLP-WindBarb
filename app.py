@@ -90,54 +90,71 @@ def extent_for_central180(ext):
     return [w, e, lat_s, lat_n]
 
 def span_from_extent180(ext180):
-    """Longitudinal span for extents in central_longitude=180 frame."""
+    """
+    Compute longitudinal span (deg) from an extent defined for central_longitude=180.
+    Handles IDL-crossing windows where east may be > 180.
+    """
     w, e, _, _ = ext180
     return (e - w) if e >= w else (e + 360.0 - w)
 
-def lon360_in_extent180_mask(lon360, ext180):
-    """
-    Mask longitudes in [0,360) that fall inside an extent defined for
-    PlateCarree(central_longitude=180). Handles IDL crossing by unwrapping.
-    """
-    w, e, _, _ = ext180
-    # Map lon360 to (-180, 180]
-    lon_c180 = ((lon360 + 180.0) % 360.0) - 180.0
-    # If e>180 we "unwrap" by adding 360 to values < w so the interval is [w, e] in a monotone axis
-    if e > 180.0:
-        lon_unwrapped = np.where(lon_c180 < w, lon_c180 + 360.0, lon_c180)
-    else:
-        lon_unwrapped = lon_c180
-    return (lon_unwrapped >= w) & (lon_unwrapped <= e)
-
-def lat_mask_for_extent(lat, ext180):
-    """Mask latitude array (which may be descending) to [lat_s, lat_n]."""
-    _, _, s, n = ext180
-    lo, hi = min(s, n), max(s, n)
-    return (lat >= lo) & (lat <= hi) if lat[0] < lat[-1] else (lat <= hi) & (lat >= lo)
-
 # -------------------- Auto-thinning (softer + denser isobars) --------------------
 def auto_plot_params(ext180, nx, ny):
+    """
+    Softer thinning to keep more detail, with denser isobars.
+    ext180 is in the PlateCarree(central_longitude=180) frame.
+    """
     lon_span = span_from_extent180(ext180)
     lat_span = abs(ext180[3] - ext180[2])
     span = max(lon_span, lat_span)
 
     if span >= 120:         # basin/hemisphere
-        desired_x = 40; barb_len = 5;  mslp_lw = 0.9; coast_lw = 0.9; border_lw = 0.7; state_lw = 0.5; cint = 2
-    elif span >= 60:        # sub-basin
-        desired_x = 55; barb_len = 6;  mslp_lw = 1.0; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
+        desired_x = 40
+        barb_len  = 5
+        mslp_lw   = 0.9
+        coast_lw  = 0.9
+        border_lw = 0.7
+        state_lw  = 0.5
+        cint      = 2
+    elif span >= 60:        # sub-basin / multi-country
+        desired_x = 55
+        barb_len  = 6
+        mslp_lw   = 1.0
+        coast_lw  = 1.0
+        border_lw = 0.8
+        state_lw  = 0.6
+        cint      = 2
     elif span >= 30:        # large region
-        desired_x = 70; barb_len = 6;  mslp_lw = 1.1; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
+        desired_x = 70
+        barb_len  = 6
+        mslp_lw   = 1.1
+        coast_lw  = 1.0
+        border_lw = 0.8
+        state_lw  = 0.6
+        cint      = 2
     else:                   # zoomed-in
-        desired_x = 85; barb_len = 7;  mslp_lw = 1.2; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
+        desired_x = 85
+        barb_len  = 7
+        mslp_lw   = 1.2
+        coast_lw  = 1.0
+        border_lw = 0.8
+        state_lw  = 0.6
+        cint      = 2
 
     stride_x = max(1, nx // desired_x)
     stride_y = max(1, ny // int(desired_x / 1.6))
     stride_x = min(stride_x, 8 if span < 150 else 12)
     stride_y = min(stride_y, 8 if span < 150 else 12)
 
-    return {'stride_y': stride_y, 'stride_x': stride_x, 'barb_len': barb_len,
-            'mslp_lw': mslp_lw, 'coast_lw': coast_lw, 'border_lw': border_lw,
-            'state_lw': state_lw, 'cint': cint}
+    return {
+        'stride_y': stride_y,
+        'stride_x': stride_x,
+        'barb_len': barb_len,
+        'mslp_lw': mslp_lw,
+        'coast_lw': coast_lw,
+        'border_lw': border_lw,
+        'state_lw': state_lw,
+        'cint': cint
+    }
 
 # -------------------- Time helper --------------------
 def read_valid_time(ds):
@@ -182,7 +199,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         c.retrieve(dataset, request, target)
         ds = nc.Dataset(target)
 
-        # variables (ERA5 longitudes usually 0..360, latitude often descending)
+        # variables (ERA5 longitudes usually 0..360, latitude descending)
         mslp = ds.variables['msl'][:] / 100.0  # hPa
         d2m  = ds.variables['d2m'][:]          # K
         u10  = ds.variables['u10'][:]
@@ -199,25 +216,11 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         u10  = u10[:,  :, order]
         v10  = v10[:,  :, order]
 
+        # convert dewpoint to °F
+        dewpoint_f = (d2m - 273.15) * 9/5 + 32
+
         # build extent for a dateline-centered view
         extent180 = extent_for_central180(region_coords)
-
-        # ---- SUBSET THE GRID TO THE VIEW WINDOW (fixes clutter & aspect) ----
-        # longitude mask
-        mask_lon = lon360_in_extent180_mask(lon_360, extent180)
-        # latitude mask
-        mask_lat = lat_mask_for_extent(lat, extent180)
-
-        lon_sub = lon_360[mask_lon]
-        lat_sub = lat[mask_lat]
-
-        mslp_sub = mslp[:, mask_lat, :][:, :, mask_lon]
-        d2m_sub  = d2m[:,  mask_lat, :][:, :, mask_lon]
-        u10_sub  = u10[:,  mask_lat, :][:, :, mask_lon]
-        v10_sub  = v10[:,  mask_lat, :][:, :, mask_lon]
-
-        # convert dewpoint to °F
-        dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
 
         # colormap and title time
         cmap = create_custom_colormap()
@@ -229,11 +232,11 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         data_crs = ccrs.PlateCarree()  # data are in geographic lon/lat with lon in 0..360
 
         # figure/axes
-        fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
+        fig, ax = plt.subplots(figsize=(18, 9), subplot_kw={'projection': proj})
         ax.set_extent(extent180, crs=extent_crs)
 
-        # auto-thin based on **subset** size (not global)
-        params = auto_plot_params(extent180, nx=lon_sub.size, ny=lat_sub.size)
+        # auto-thin based on extent/grid
+        params = auto_plot_params(extent180, nx=lon_360.size, ny=lat.size)
 
         # map features
         ax.set_facecolor('#C0C0C0')
@@ -242,13 +245,14 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         try:
             ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
         except Exception:
+            # STATES layer may not be available in all environments; ignore quietly
             pass
 
         # 2D grid for barbs
-        LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
+        LON2, LAT2 = np.meshgrid(lon_360, lat)
 
         # isobars (denser, with guard on total level count)
-        mslp0 = mslp_sub[0, :, :]
+        mslp0 = mslp[0, :, :]
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
         mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
@@ -258,39 +262,33 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             levels = levels[::skip]
 
         ax.contour(
-            lon_sub, lat_sub, mslp0,
+            lon_360, lat, mslp0,
             levels=levels, colors='black',
             linewidths=params['mslp_lw'],
             transform=data_crs
         )
 
-        # filled dewpoint (add cyclic column only if the subset still touches the seam)
-        lon_for_fill = lon_sub
+        # filled dewpoint (add cyclic column to avoid a seam at 180°)
         dp_slice = dewpoint_f[0, :, :]
-        # Determine if subset spans 0/360 seam in lon_360
-        spans_seam = (np.max(np.diff(np.sort(lon_sub))) > 5) and (lon_sub[0] < 20 or lon_sub[-1] > 340)
-        if spans_seam:
-            dp_cyc, lon_cyc = add_cyclic_point(dp_slice, coord=lon_sub)
-            lon_for_fill = lon_cyc
-            dp_slice = dp_cyc
-
+        dp_cyc, lon_cyc = add_cyclic_point(dp_slice, coord=lon_360)
         cf = ax.contourf(
-            lon_for_fill, lat_sub, dp_slice,
+            lon_cyc, lat, dp_cyc,
             levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
             transform=data_crs
         )
 
-        # wind barbs (thinned by subset-based strides)
-        si = params['stride_y']; sj = params['stride_x']
+        # wind barbs
+        si = params['stride_y']
+        sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
-            u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
+            u10[0, ::si, ::sj], v10[0, ::si, ::sj],
             length=params['barb_len'],
             transform=data_crs
         )
 
         # colorbar and title
-        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
+        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.7)
         cb.set_label('2m Dewpoint Temperature (°F)')
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
@@ -299,7 +297,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
 
-        # cleanup
+        # cleanup figures and dataset
         ds.close()
         plt.close(fig)
         return buffer
