@@ -12,7 +12,7 @@ from datetime import datetime
 import io
 
 # -------------------- Streamlit page --------------------
-st.set_page_config(page_title="ERA5 Weather Visualization", layout="wide")
+st.set_page_config(page_title="ERA5 Weather Data Visualizer", layout="wide")
 
 # Regions (lon_w, lon_e, lat_s, lat_n). Longitudes may be outside [-180,180]
 REGIONS = {
