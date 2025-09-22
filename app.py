@@ -71,64 +71,76 @@ def create_custom_colormap():
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
 # -------------------- Geo helpers --------------------
-def wrap_pm180(lon):
-    x = (lon + 180.0) % 360.0 - 180.0
-    return 180.0 if np.isclose(x, -180.0) else x
-
-def crosses_dateline(lon_w, lon_e):
-    w = wrap_pm180(lon_w); e = wrap_pm180(lon_e)
-    return e < w
-
-def normalize_extent(ext):
-    w,e,s,n = ext
-    if s > n: s,n = n,s
-    return w,e,s,n
+def wrap_pm180(x):
+    """Map longitude to (-180, 180]; keep exact -180 at +180 for cleaner logic."""
+    v = (x + 180.0) % 360.0 - 180.0
+    return 180.0 if np.isclose(v, -180.0) else v
 
 def extent_for_crs(ext):
-    lon_w, lon_e, lat_s, lat_n = normalize_extent(ext)
-    if crosses_dateline(lon_w, lon_e):
+    """Choose projection and build proper extent for that projection."""
+    lon_w, lon_e, lat_s, lat_n = ext
+    s, n = (lat_s, lat_n) if lat_s <= lat_n else (lat_n, lat_s)
+
+    w = ((lon_w + 180.0) % 360.0) - 180.0
+    e = ((lon_e + 180.0) % 360.0) - 180.0
+    crosses = e < w
+
+    if crosses:
+        # IDL path → 180-centered
         proj = ccrs.PlateCarree(central_longitude=180)
         extent_crs = ccrs.PlateCarree(central_longitude=180)
-        w = wrap_pm180(lon_w); e = wrap_pm180(lon_e)
-        if e <= w: e += 360.0
-        extent = [w, e, lat_s, lat_n]
+        if e <= w:
+            e += 360.0
+        extent = [w, e, s, n]
         idl = True
     else:
+        # Non-IDL → vanilla PlateCarree, no unwrap
         proj = ccrs.PlateCarree()
         extent_crs = ccrs.PlateCarree()
-        w = wrap_pm180(lon_w); e = wrap_pm180(lon_e)
-        if e <= w: e += 360.0
-        extent = [w, e, lat_s, lat_n]
+        if e <= w:  # safety
+            e, w = w, e
+        extent = [w, e, s, n]
         idl = False
+
     return proj, extent_crs, extent, idl
 
-def subset_lon_lat_continuous(lon_360, lat, data3d, lon_w, lon_e):
-    lon_pm180 = ((lon_360 + 180.0) % 360.0) - 180.0  # [-180,180)
-    w = wrap_pm180(lon_w); e = wrap_pm180(lon_e)
+def subset_lon_lat_continuous(lon_360, lat, data3d, lon_w, lon_e, lat_s, lat_n):
+    """
+    Build a continuous, monotonic longitude slice and apply explicit lat bounds.
+    Returns lon_sel ([-180,180]), lat_sel, data_sel aligned to those axes.
+    """
+    # 0..360 → [-180,180)
+    lon_pm180 = ((lon_360 + 180.0) % 360.0) - 180.0
 
+    # normalize requested boxes
+    s, n = (lat_s, lat_n) if lat_s <= lat_n else (lat_n, lat_s)
+    w0 = ((lon_w + 180.0) % 360.0) - 180.0
+    e0 = ((lon_e + 180.0) % 360.0) - 180.0
+    crosses = e0 < w0
+
+    # comparison axis that’s monotonic across the interval
     lon_cmp = lon_pm180.copy()
-    if crosses_dateline(lon_w, lon_e):
-        lon_cmp = np.where(lon_cmp < w, lon_cmp + 360.0, lon_cmp)
-        if e < w: e += 360.0
+    w, e = w0, e0
+    if crosses:
+        lon_cmp = np.where(lon_cmp < w0, lon_cmp + 360.0, lon_cmp)
+        if e0 < w0:
+            e = e0 + 360.0
 
     idx = np.where((lon_cmp >= w) & (lon_cmp <= e))[0]
     if idx.size == 0:
-        idx = np.arange(lon_360.size)
-    order = np.argsort(lon_cmp[idx])
-    idx = idx[order]
+        idx = np.arange(lon_pm180.size)
+    idx = idx[np.argsort(lon_cmp[idx])]
+    lon_sel = lon_pm180[idx]
 
-    lon_sel_pm180 = lon_pm180[idx]
-
-    # latitude selection (handle array orientation)
-    req_s, req_n = sorted([extent_lat_s, extent_lat_n])
+    # latitude selection, robust to descending lat arrays
     if lat[0] < lat[-1]:
-        lat_mask = (lat >= req_s) & (lat <= req_n)
+        lat_mask = (lat >= s) & (lat <= n)
     else:
-        lat_mask = (lat <= req_n) & (lat >= req_s)
+        lat_mask = (lat <= n) & (lat >= s)
     lat_sel = lat[lat_mask]
 
     data_sel = data3d[:, lat_mask, :][:, :, idx]
-    return lon_sel_pm180, lat_sel, data_sel
+    return lon_sel, lat_sel, data_sel
 
 # -------------------- Zoom-aware density & intervals --------------------
 def auto_plot_params(extent, nx, ny):
@@ -137,13 +149,10 @@ def auto_plot_params(extent, nx, ny):
     lat_span = abs(n - s)
     span = max(lon_span, lat_span)
 
-    # — your ask —
-    # zoomed OUT (big span): normal density, tight isobars
-    # zoomed IN (small span): sparser barbs, *wider* isobar spacing
-
+    # zoomed OUT: tighter isobars; zoomed IN: wider isobars + sparser barbs
     if span >= 120:         # basin/hemisphere
         desired_x = 40; barb_len = 5
-        barb_min_stride = 7      # slightly sparser than before
+        barb_min_stride = 7
         mslp_lw = 0.9; coast_lw = 0.9; border_lw = 0.7; state_lw = 0.5
         cint = 2
     elif span >= 60:        # sub-basin
@@ -153,22 +162,19 @@ def auto_plot_params(extent, nx, ny):
         cint = 2
     elif span >= 30:        # large region
         desired_x = 70; barb_len = 6
-        barb_min_stride = 6      # sparser than before
+        barb_min_stride = 6
         mslp_lw = 1.05; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
-        cint = 3                 # wider than 2 hPa
+        cint = 3
     else:                   # zoomed-in (e.g., CONUS)
         desired_x = 85; barb_len = 6
-        barb_min_stride = 6      # CONUS target (your standalone script used ::5; we go a touch sparser)
+        barb_min_stride = 6    # your “less crowded than ::5” ask
         mslp_lw = 1.1; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
-        cint = 4                 # wider spacing to un-crowd
+        cint = 4
 
-    # translate desired_x to strides, then clamp with barb_min_stride
     stride_x = max(1, nx // desired_x)
     stride_y = max(1, ny // int(desired_x / 1.6))
-    # ensure we don't go denser than asked:
     stride_x = max(stride_x, barb_min_stride)
     stride_y = max(stride_y, barb_min_stride)
-    # also cap so very-large grids don't explode
     stride_x = min(stride_x, 12)
     stride_y = min(stride_y, 12)
 
@@ -191,29 +197,21 @@ def read_valid_time(ds):
     except Exception:
         return "Unknown valid time"
 
-# -------------------- Safe cyclic helper (no equal-spacing crashes) --------------------
+# -------------------- Safe cyclic helper --------------------
 def add_cyclic_safe(data2d, lon1d):
-    """
-    Add a cyclic column without strict equal-spacing requirements.
-    If lon spacing is uniform (within tolerance), uses add_cyclic_point.
-    Otherwise, appends a last column by duplicating the first column and adding dx.
-    """
+    """Add a cyclic column without strict equal-spacing requirements."""
     if lon1d.size < 2:
         return data2d, lon1d
-
     diffs = np.diff(lon1d.astype(float))
     dx_med = np.median(diffs)
-    # allow tiny float noise (~1e-6 deg); also guard weird edges near ±180
     if np.all(np.isclose(diffs, dx_med, rtol=1e-6, atol=1e-6)):
         try:
             dcyc, lcyc = add_cyclic_point(data2d, coord=lon1d)
             return dcyc, lcyc
         except Exception:
-            pass  # fall through to manual
-
+            pass
     # manual append
     last = lon1d[-1]
-    # try to infer dx robustly
     dx = dx_med if np.isfinite(dx_med) and dx_med > 0 else (lon1d[-1] - lon1d[-2])
     new_lon = np.concatenate([lon1d, [last + dx]])
     new_data = np.concatenate([data2d, data2d[:, :1]], axis=1)
@@ -252,6 +250,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         lon0 = ds.variables['longitude'][:]
         lat  = ds.variables['latitude'][:]
 
+        # enforce strictly increasing longitudes in 0..360
         lon_360 = np.asarray(lon0)
         order = np.argsort(lon_360)
         lon_360 = lon_360[order]
@@ -263,15 +262,11 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         lon_w, lon_e, lat_s, lat_n = region_coords
         proj, extent_crs, extent, idl_mode = extent_for_crs([lon_w, lon_e, lat_s, lat_n])
 
-        # expose requested lats to subset helper
-        global extent_lat_s, extent_lat_n
-        extent_lat_s, extent_lat_n = lat_s, lat_n
-
-        # continuous, monotonic lon slice
-        lon_sel, lat_sel, mslp_sub = subset_lon_lat_continuous(lon_360, lat, mslp, lon_w, lon_e)
-        _,      _,      d2m_sub  = subset_lon_lat_continuous(lon_360, lat, d2m,  lon_w, lon_e)
-        _,      _,      u10_sub  = subset_lon_lat_continuous(lon_360, lat, u10,  lon_w, lon_e)
-        _,      _,      v10_sub  = subset_lon_lat_continuous(lon_360, lat, v10,  lon_w, lon_e)
+        # subset to a continuous, monotonic lon slice + explicit lat bounds
+        lon_sel, lat_sel, mslp_sub = subset_lon_lat_continuous(lon_360, lat, mslp, lon_w, lon_e, lat_s, lat_n)
+        _,       _,       d2m_sub  = subset_lon_lat_continuous(lon_360, lat, d2m,  lon_w, lon_e, lat_s, lat_n)
+        _,       _,       u10_sub  = subset_lon_lat_continuous(lon_360, lat, u10,  lon_w, lon_e, lat_s, lat_n)
+        _,       _,       v10_sub  = subset_lon_lat_continuous(lon_360, lat, v10,  lon_w, lon_e, lat_s, lat_n)
 
         dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
         cmap = create_custom_colormap()
@@ -284,6 +279,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 
         params = auto_plot_params(extent, nx=lon_sel.size, ny=lat_sel.size)
 
+        # map features
         ax.set_facecolor('#C0C0C0')
         ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
@@ -292,16 +288,16 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         except Exception:
             pass
 
+        # grids for barbs
         LON2, LAT2 = np.meshgrid(lon_sel, lat_sel)
 
-        # ----- isobars (zoom-aware interval) -----
+        # ----- isobars (zoom-aware intervals) -----
         mslp0 = mslp_sub[0, :, :]
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
         mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
         levels = np.arange(mmin, mmax + cint, cint)
-        # guard rails so we never exceed ~60 levels
-        if levels.size > 60:
+        if levels.size > 60:  # guard rails
             skip = int(np.ceil(levels.size / 60))
             levels = levels[::skip]
 
@@ -312,18 +308,11 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
-        # ----- filled dewpoint (seam-safe) -----
+        # ----- filled dewpoint -----
         dp_slice = dewpoint_f[0, :, :]
         lon_for_fill = lon_sel
-
-        # detect touching seam in the -180..180 frame
-        if lon_sel.size > 1:
-            dlon = np.median(np.diff(lon_sel))
-        else:
-            dlon = 1.0
-        touches_left  = np.isclose(lon_sel.min(), -180.0, atol=dlon+1e-6)
-        touches_right = np.isclose(lon_sel.max(),  180.0, atol=dlon+1e-6)
-        if touches_left or touches_right:
+        # Only add a cyclic column for IDL windows
+        if idl_mode:
             dp_slice, lon_for_fill = add_cyclic_safe(dp_slice, lon_sel)
 
         cf = ax.contourf(
@@ -332,7 +321,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
-        # ----- wind barbs (zoom-aware thinning; slightly sparser) -----
+        # ----- wind barbs (zoom-aware thinning) -----
         si = params['stride_y']; sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj],      LAT2[::si, ::sj],
@@ -341,10 +330,12 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
+        # colorbar + title
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
         cb.set_label('2m Dewpoint Temperature (°F)')
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
+        # save to buffer
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
@@ -360,12 +351,14 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 # -------------------- Streamlit UI --------------------
 st.title("ERA5 Weather Visualization")
 
+# Get API key from secrets
 try:
     api_key = st.secrets["CDS_API_KEY"]
 except KeyError:
     st.error("CDS API key not found in secrets. Please configure your API key.")
     st.stop()
 
+# inputs
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     year = st.number_input("Year", min_value=1940, max_value=datetime.now().year, value=2023)
@@ -376,6 +369,7 @@ with col3:
 with col4:
     hour = st.number_input("Hour", min_value=0, max_value=23, value=12)
 
+# region + button
 col5, col6 = st.columns(2)
 with col5:
     region_options = []
@@ -386,6 +380,7 @@ with col5:
 with col6:
     generate_button = st.button("Generate", type="primary", help="Generate the ERA5 visualization")
 
+# run
 if generate_button:
     category, region_name = selected_region.split(": ", 1)
     region_coords = REGIONS[category][region_name]
