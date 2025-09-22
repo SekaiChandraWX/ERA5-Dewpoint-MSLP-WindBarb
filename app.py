@@ -12,7 +12,7 @@ from datetime import datetime
 import io
 
 # -------------------- Streamlit page --------------------
-st.set_page_config(page_title="ERA5 Weather Data Visualizer", layout="wide")
+st.set_page_config(page_title="ERA5 General Archive Data Plotter", layout="wide")
 
 # Regions (lon_w, lon_e, lat_s, lat_n). Longitudes may be outside [-180,180]
 REGIONS = {
@@ -556,7 +556,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key, produ
     return buffer
 
 # -------------------- Streamlit UI --------------------
-st.title("ERA5 Weather Visualization")
+st.title("ERA5 General Archive Data Plotter")
 
 # Get API key from secrets
 try:
