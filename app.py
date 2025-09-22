@@ -40,8 +40,8 @@ REGIONS = {
     }
 }
 
-# -------------------- Colormap --------------------
-def create_custom_colormap():
+# -------------------- Colormaps (match your scripts) --------------------
+def create_custom_dewpoint_cmap():
     colors = [
         (152,109, 77),(150,108, 76),(148,107, 76),(146,106, 75),(144,105, 75),(142,104, 74),
         (140,102, 74),(138,101, 73),(136,100, 72),(134, 99, 72),(132, 98, 71),(130, 97, 71),
@@ -64,12 +64,78 @@ def create_custom_colormap():
         ( 28, 57, 58),( 19, 44, 43),(102,102,154),( 96, 94,148),( 89, 86,142),( 83, 78,136),
         ( 77, 70,130),( 70, 62,124),( 64, 54,118),( 58, 46,112),( 51, 38,106),( 45, 30,100),
         (114, 64,113),(120, 69,115),(125, 75,117),(131, 80,118),(136, 86,120),(142, 91,122),
-        (147, 97,124),(153,102,125),(158,108,127),(164,113,129)
+        (147, 97,124),(153,102,125),(158, 108,127),(164, 113,129)
     ]
-    norm_colors = [(r/255.0, g/255.0, b/255.0) for (r, g, b) in colors]
-    return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
+    norm = [(r/255.0, g/255.0, b/255.0) for r,g,b in colors]
+    return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm, N=256)
 
-# -------------------- Dateline-safe math by recentering --------------------
+def cmap_500_wind():
+    pw500speed_colors = [
+        (230,244,255),(219,240,254),(209,235,254),(198,231,253),(188,227,253),(177,223,252),
+        (167,219,252),(156,214,251),(146,210,251),(135,206,250),(132,194,246),(129,183,241),
+        (126,171,237),(123,160,232),(121,148,228),(118,136,223),(115,125,219),(112,113,214),
+        (109,102,210),(106, 90,205),(118, 96,207),(131,102,208),(143,108,210),(156,114,211),
+        (168,120,213),(180,126,214),(193,132,216),(205,138,217),(218,144,219),(230,150,220),
+        (227,144,217),(224,138,214),(221,132,211),(218,126,208),(215,120,205),(212,114,202),
+        (209,108,199),(206,102,196),(203, 96,193),(200, 90,190),(196, 83,186),(192, 76,182),
+        (188, 69,178),(184, 62,174),(180, 55,170),(176, 48,166),(172, 41,162),(168, 34,158),
+        (164, 27,154),(160, 20,150),(164, 16,128),(168, 14,117),(172, 14,117),(176, 12,106),
+        (180,  8, 95),(184,  6, 73),(188,  4, 62),(192,  2, 51),(200,  0, 40),(200,  0, 40),
+        (202,  4, 42),(204,  8, 44),(208, 12, 44),(210, 20, 50),(212, 24, 52),(212, 24, 52),
+        (214, 28, 54),(218, 36, 58),(220, 40, 60),(222, 44, 62),(224, 48, 64),(226, 52, 66),
+        (228, 56, 68),(230, 60, 70),(232, 64, 72),(234, 68, 74),(236, 72, 76),(238, 76, 78),
+        (240, 80, 80),(241, 96, 82),(242,112, 84),(243,128, 86),(244,144, 88),(245,160, 90),
+        (246,176, 92),(247,192, 94),(248,208, 96),(249,224, 98),(250,240,100),(247,235, 97),
+        (244,230, 94),(241,225, 91),(238,220, 88),(235,215, 85),(232,210, 82),(229,205, 79),
+        (226,200, 76),(223,195, 73),(220,190, 70),(217,185, 67),(214,180, 64),(211,175, 61),
+        (208,170, 58),(205,165, 55),(202,160, 52),(199,155, 49),(196,150, 46),(193,145, 43),
+        (190,140, 40),(187,135, 37),(184,130, 34),(181,125, 31),(178,120, 28),(175,115, 25),
+        (172,110, 22),(169,105, 19),(166,100, 16),(163, 95, 13),(160, 90, 10),(160, 90, 10)
+    ]
+    norm = [(r/255, g/255, b/255) for r,g,b in pw500speed_colors]
+    return mcolors.LinearSegmentedColormap.from_list("wind500_cmap", norm)
+
+def cmap_850_wind():
+    pw850speed_colors = [
+        (240,248,255),(219,240,254),(198,231,253),(177,223,252),(156,214,251),(135,206,250),
+        (129,183,241),(123,160,232),(118,136,223),(112,113,214),(106, 90,205),(131,102,208),
+        (156,114,211),(180,126,214),(205,138,217),(230,150,220),(224,138,214),(218,126,208),
+        (212,114,202),(206,102,196),(200, 90,190),(192, 76,182),(184, 62,174),(176, 48,166),
+        (168, 34,158),(160, 20,150),(168, 16,128),(176, 12,106),(184,  4, 62),(200,  0, 40),
+        (200,  0, 40),(208, 16, 48),(212, 24, 52),(216, 32, 56),(220, 40, 60),(224, 48, 64),
+        (228, 56, 68),(232, 64, 72),(236, 72, 76),(240, 80, 80),(242,112, 84),(244,144, 88),
+        (246,176, 92),(248,208, 96),(250,240,100),(244,230, 94),(238,220, 88),(232,210, 82),
+        (226,200, 76),(220,190, 70),(214,180, 64),(208,170, 58),(202,160, 52),(196,150, 46),
+        (190,140, 40),(184,130, 34),(178,120, 28),(172,110, 22),(166,100, 16),(160, 90, 10)
+    ]
+    norm = [(r/255, g/255, b/255) for r,g,b in pw850speed_colors]
+    return mcolors.LinearSegmentedColormap.from_list("wind850_cmap", norm)
+
+def cmap_cp_white_to_jet():
+    jet = plt.get_cmap('jet')
+    colors = [(1,1,1)] * 10  # 0..0.1 mm white
+    n_colors = 99
+    jet_colors = [jet(i / n_colors) for i in range(n_colors)]
+    colors.extend(jet_colors)
+    return mcolors.LinearSegmentedColormap.from_list("custom_jet", colors, N=100)
+
+def rbtop3():
+    return mcolors.LinearSegmentedColormap.from_list("", [
+        (0/140, "#000000"),
+        (60/140, "#fffdfd"),
+        (60/140, "#05fcfe"),
+        (70/140, "#010071"),
+        (80/140, "#00fe24"),
+        (90/140, "#fbff2d"),
+        (100/140,"#fd1917"),
+        (110/140,"#000300"),
+        (120/140,"#e1e4e5"),
+        (120/140,"#eb6fc0"),
+        (130/140,"#9b1f94"),
+        (140/140,"#330f2f")
+    ]).reversed()
+
+# -------------------- Dateline-safe recentering --------------------
 def mod360(x):
     return (np.asarray(x) % 360.0 + 360.0) % 360.0
 
@@ -93,7 +159,7 @@ def build_projection_and_extent(lon_w, lon_e, lat_s, lat_n):
         return ((lon - center + 180.0) % 360.0) - 180.0
 
     w_c = to_center_frame(w_u)
-    e_c = to_center_frame(e_u)  # guaranteed w_c < e_c
+    e_c = to_center_frame(e_u)
     proj = ccrs.PlateCarree(central_longitude=float(center))
     extent_crs = ccrs.PlateCarree(central_longitude=float(center))
     extent = [w_c, e_c, s, n]
@@ -132,64 +198,31 @@ def ensure_increasing_axes(lon1d, lat1d, *fields):
         out = [np.ascontiguousarray(f[:, ::-1, :]) for f in out]
     return (lon_up, lat_up, *out)
 
-# ---- NEW: recenter longitudes for plotting to the map's central_longitude ----
 def to_center_frame_vec(lon_pm180, center_deg):
-    """Convert standard lon in [-180,180) to the centered frame (-180..180] for plotting."""
     return ((lon_pm180 - center_deg + 180.0) % 360.0) - 180.0
 
 # -------------------- Zoom-aware density & intervals --------------------
 def auto_plot_params(extent, nx, ny):
-    """
-    Choose barb thinning and isobar spacing from the map span.
-    - Larger span  => sparser barbs, slightly wider isobars
-    - Smaller span => denser barbs, tighter isobars
-    """
     w, e, s, n = extent
-    lon_span = e - w               # already guaranteed e>w in centered frame
+    lon_span = e - w
     lat_span = abs(n - s)
     span = max(lon_span, lat_span)
 
-    # Heuristics tuned so CONUS stays detailed, WPAC/EPAC breathe
     if span >= 120:
-        # very wide basin view (e.g., WPAC, global-ish)
-        desired_x = 28            # smaller desired_x -> larger stride -> sparser
-        barb_len = 5
-        barb_min_stride = 9       # ensure sparsity
-        mslp_lw = 0.95
-        coast_lw = 0.9; border_lw = 0.75; state_lw = 0.5
-        cint = 3                  # was 2; slightly wider spacing
+        desired_x = 28; barb_len = 5; barb_min_stride = 9
+        mslp_lw = 0.95; coast_lw = 0.9; border_lw = 0.75; state_lw = 0.5; cint = 3
     elif span >= 60:
-        # large regional (EPAC/Atl basin chunks, wide continents)
-        desired_x = 45
-        barb_len = 6
-        barb_min_stride = 8
-        mslp_lw = 1.0
-        coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
-        cint = 2
+        desired_x = 45; barb_len = 6; barb_min_stride = 8
+        mslp_lw = 1.0; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 2
     elif span >= 30:
-        # mesoscale-regional (EU, E/SE Asia subregions, etc.)
-        desired_x = 65
-        barb_len = 6
-        barb_min_stride = 7
-        mslp_lw = 1.05
-        coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
-        cint = 3
+        desired_x = 65; barb_len = 6; barb_min_stride = 7
+        mslp_lw = 1.05; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 3
     else:
-        # tighter zooms (CONUS, states, small-country)
-        desired_x = 85            # dense
-        barb_len = 6
-        barb_min_stride = 6
-        mslp_lw = 1.1
-        coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
-        cint = 4
+        desired_x = 85; barb_len = 6; barb_min_stride = 6
+        mslp_lw = 1.1; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6; cint = 4
 
-    # convert desired density to strides; clamp for sanity
-    stride_x = max(1, nx // desired_x)
-    stride_y = max(1, ny // int(desired_x / 1.6))
-    stride_x = max(stride_x, barb_min_stride)
-    stride_y = max(stride_y, barb_min_stride)
-    stride_x = min(stride_x, 14)
-    stride_y = min(stride_y, 14)
+    stride_x = max(1, min(14, max(nx // desired_x, barb_min_stride)))
+    stride_y = max(1, min(14, max(ny // int(desired_x / 1.6), barb_min_stride)))
 
     return {
         'stride_y': stride_y, 'stride_x': stride_x, 'barb_len': barb_len,
@@ -210,141 +243,317 @@ def read_valid_time(ds):
     except Exception:
         return "Unknown valid time"
 
-# -------------------- Main renderer --------------------
-def generate_visualization(year, month, day, hour, region_coords, api_key):
-    date_input = f"{year:04}{month:02}{day:02}{hour:02}"
-
+# -------------------- Data fetch helpers --------------------
+def cds_retrieve_single(date_input, api_key, variables):
     c = cdsapi.Client(url='https://cds.climate.copernicus.eu/api', key=api_key)
-    dataset = "reanalysis-era5-single-levels"
-    request = {
+    req = {
         "product_type": "reanalysis",
-        "variable": [
-            'mean_sea_level_pressure', '2m_dewpoint_temperature', '2m_temperature',
-            '10m_u_component_of_wind', '10m_v_component_of_wind'
-        ],
+        "variable": variables,
         "year": date_input[:4],
         "month": date_input[4:6],
         "day": date_input[6:8],
         "time": date_input[8:] + ":00",
         "format": "netcdf"
     }
+    tmp = tempfile.NamedTemporaryFile(suffix='.nc', delete=False)
+    target = tmp.name; tmp.close()
+    c.retrieve("reanalysis-era5-single-levels", req, target)
+    return target
 
-    with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp_file:
-        target = tmp_file.name
+def cds_retrieve_pl(date_input, api_key, pressure_level, variables):
+    c = cdsapi.Client(url='https://cds.climate.copernicus.eu/api', key=api_key)
+    req = {
+        "product_type": "reanalysis",
+        "pressure_level": [str(pressure_level)],
+        "variable": variables,
+        "year": date_input[:4],
+        "month": date_input[4:6],
+        "day": date_input[6:8],
+        "time": date_input[8:] + ":00",
+        "format": "netcdf"
+    }
+    tmp = tempfile.NamedTemporaryFile(suffix='.nc', delete=False)
+    target = tmp.name; tmp.close()
+    c.retrieve("reanalysis-era5-pressure-levels", req, target)
+    return target
 
+# -------------------- Plotters --------------------
+def plot_base_map(ax, params):
+    ax.set_facecolor('#C0C0C0')
+    ax.add_feature(cfeature.COASTLINE, edgecolor='#7f7f7f', linewidth=params['coast_lw'])
+    ax.add_feature(cfeature.BORDERS, edgecolor='#7f7f7f', linestyle=':', linewidth=params['border_lw'])
     try:
-        c.retrieve(dataset, request, target)
-        ds = nc.Dataset(target)
+        ax.add_feature(cfeature.STATES, edgecolor='#9e9e9e', linestyle=':', linewidth=params['state_lw'])
+    except Exception:
+        pass
 
-        mslp = ds.variables['msl'][:] / 100.0
-        d2m  = ds.variables['d2m'][:]
-        u10  = ds.variables['u10'][:]
-        v10  = ds.variables['v10'][:]
-        lon0 = ds.variables['longitude'][:]
-        lat  = ds.variables['latitude'][:]
+def add_barbs(ax, lon_plot, lat_sel, u, v, params, transform):
+    LON2, LAT2 = np.meshgrid(lon_plot, lat_sel)
+    si = params['stride_y']; sj = params['stride_x']
+    ax.barbs(
+        LON2[::si, ::sj], LAT2[::si, ::sj],
+        u[0, ::si, ::sj], v[0, ::si, ::sj],
+        length=params['barb_len'], transform=transform
+    )
 
-        # enforce strictly increasing longitudes in 0..360
-        order = np.argsort(lon0)
-        lon_360 = lon0[order]
-        mslp = mslp[:, :, order]
-        d2m  = d2m[:,  :, order]
-        u10  = u10[:,  :, order]
-        v10  = v10[:,  :, order]
+# -------------------- Main renderer --------------------
+def generate_visualization(year, month, day, hour, region_coords, api_key, product):
+    date_input = f"{year:04}{month:02}{day:02}{hour:02}"
+    lon_w, lon_e, lat_s, lat_n = region_coords
 
-        lon_w, lon_e, lat_s, lat_n = region_coords
+    # Always get single levels core for IDL-safe lon/lat grid + winds/title when needed
+    single_vars = [
+        'mean_sea_level_pressure','2m_dewpoint_temperature','2m_temperature',
+        '10m_u_component_of_wind','10m_v_component_of_wind'
+    ]
+    single_file = cds_retrieve_single(date_input, api_key, single_vars)
+    ds = nc.Dataset(single_file)
 
-        # projection centered to the window midpoint (IDL-proof)
-        proj, extent_crs, extent_centered, center_deg = build_projection_and_extent(lon_w, lon_e, lat_s, lat_n)
+    # Read common single-level fields
+    mslp = ds.variables['msl'][:] / 100.0
+    d2m  = ds.variables['d2m'][:]
+    u10  = ds.variables['u10'][:]
+    v10  = ds.variables['v10'][:]
+    lon0 = ds.variables['longitude'][:]
+    lat  = ds.variables['latitude'][:]
 
-        # subset window (no cyclic padding needed)
-        lon_sel, lat_sel, mslp_sub = subset_lon_lat(lon_360, lat, mslp, lon_w, lon_e, lat_s, lat_n)
-        _,       _,       d2m_sub  = subset_lon_lat(lon_360, lat, d2m,  lon_w, lon_e, lat_s, lat_n)
-        _,       _,       u10_sub  = subset_lon_lat(lon_360, lat, u10,  lon_w, lon_e, lat_s, lat_n)
-        _,       _,       v10_sub  = subset_lon_lat(lon_360, lat, v10,  lon_w, lon_e, lat_s, lat_n)
+    # Enforce strictly increasing longitudes (0..360)
+    order = np.argsort(lon0)
+    lon_360 = lon0[order]
+    mslp = mslp[:, :, order]
+    d2m  = d2m[:,  :, order]
+    u10  = u10[:,  :, order]
+    v10  = v10[:,  :, order]
 
-        # ---- recenter selected longitudes to the map's center and then enforce monotonic axes
-        lon_plot = to_center_frame_vec(lon_sel, center_deg)
+    # Build map/projection for region (IDL-proof)
+    proj, extent_crs, extent_centered, center_deg = build_projection_and_extent(lon_w, lon_e, lat_s, lat_n)
 
-        # tiny epsilon to avoid duplicate-edge issues exactly at +/-180
-        lon_plot = np.where(np.isclose(np.diff(np.r_[lon_plot[0]-1e-8, lon_plot]), 0.0), lon_plot + 1e-8, lon_plot)
+    # Subset common grids to region
+    lon_sel, lat_sel, mslp_sub = subset_lon_lat(lon_360, lat, mslp, lon_w, lon_e, lat_s, lat_n)
+    _,       _,       d2m_sub  = subset_lon_lat(lon_360, lat, d2m,  lon_w, lon_e, lat_s, lat_n)
+    _,       _,       u10_sub  = subset_lon_lat(lon_360, lat, u10,  lon_w, lon_e, lat_s, lat_n)
+    _,       _,       v10_sub  = subset_lon_lat(lon_360, lat, v10,  lon_w, lon_e, lat_s, lat_n)
 
-        lon_plot, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub = ensure_increasing_axes(
-            lon_plot, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub
-        )
+    # Center longitudes to the map frame and sort axes
+    lon_plot = to_center_frame_vec(((lon_sel + 180.0) % 360.0) - 180.0, center_deg)
+    lon_plot = np.where(np.isclose(np.diff(np.r_[lon_plot[0]-1e-8, lon_plot]), 0.0), lon_plot + 1e-8, lon_plot)
 
+    lon_plot, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub = ensure_increasing_axes(
+        lon_plot, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub
+    )
+
+    data_crs_centered = ccrs.PlateCarree(central_longitude=center_deg)
+    date_str = read_valid_time(ds)
+
+    # Figure / axes
+    fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
+    ax.set_extent(extent_centered, crs=extent_crs)
+    params = auto_plot_params(extent_centered, nx=lon_plot.size, ny=lat_sel.size)
+    plot_base_map(ax, params)
+
+    # ---------- Product branches ----------
+    if product == "Dewpoint, MSLP, and wind barbs":
         dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
-        cmap = create_custom_colormap()
-        date_str = read_valid_time(ds)
+        cmap = create_custom_dewpoint_cmap()
 
-        data_crs_centered = ccrs.PlateCarree(central_longitude=center_deg)
-
-        # figure/axes
-        fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
-        ax.set_extent(extent_centered, crs=extent_crs)
-
-        params = auto_plot_params(extent_centered, nx=lon_plot.size, ny=lat_sel.size)
-
-        # map features (neutral gray so they don't compete with contours/barbs)
-        ax.set_facecolor('#C0C0C0')
-        ax.add_feature(cfeature.COASTLINE, edgecolor='#7f7f7f', linewidth=params['coast_lw'])
-        ax.add_feature(cfeature.BORDERS, edgecolor='#7f7f7f', linestyle=':', linewidth=params['border_lw'])
-        try:
-            ax.add_feature(cfeature.STATES, edgecolor='#9e9e9e', linestyle=':', linewidth=params['state_lw'])
-        except Exception:
-            pass
-
-        # mesh for barbs
-        LON2, LAT2 = np.meshgrid(lon_plot, lat_sel)
-
-        # isobars
+        # Isobars
         mslp0 = np.ascontiguousarray(mslp_sub[0, :, :])
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
         mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
         levels = np.arange(mmin, mmax + cint, cint)
         if levels.size > 60:
-            skip = int(np.ceil(levels.size / 60))
-            levels = levels[::skip]
+            levels = levels[::int(np.ceil(levels.size / 60))]
 
-        ax.contour(
-            lon_plot, lat_sel, mslp0,
-            levels=levels, colors='black',
-            linewidths=params['mslp_lw'],
-            transform=data_crs_centered
-        )
+        ax.contour(lon_plot, lat_sel, mslp0, levels=levels, colors='black',
+                   linewidths=params['mslp_lw'], transform=data_crs_centered)
 
-        # filled dewpoint (now in the same centered frame)
-        cf = ax.contourf(
-            lon_plot, lat_sel, dewpoint_f[0, :, :],
-            levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
-            transform=data_crs_centered
-        )
+        # Filled dewpoint
+        cf = ax.contourf(lon_plot, lat_sel, dewpoint_f[0, :, :],
+                         levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+                         transform=data_crs_centered)
 
-        # wind barbs (zoom-aware thinning)
-        si = params['stride_y']; sj = params['stride_x']
-        ax.barbs(
-            LON2[::si, ::sj],      LAT2[::si, ::sj],
-            u10_sub[0, ::si, ::sj], v10_sub[0, ::si, ::sj],
-            length=params['barb_len'],
-            transform=data_crs_centered
-        )
-
-        # colorbar + title
+        add_barbs(ax, lon_plot, lat_sel, u10_sub, v10_sub, params, data_crs_centered)
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
         cb.set_label('2m Dewpoint Temperature (°F)')
-        ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
+        title = f'ERA5 Pressure, Dewpoint, and 10 m Wind — Valid: {date_str}'
 
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
-        buffer.seek(0)
+    elif product == "Surface-based CAPE and wind barbs":
+        # Retrieve SBCAPE (single-levels 'convective_available_potential_energy' -> short name 'cape')
+        cape_file = cds_retrieve_single(date_input, api_key, ['convective_available_potential_energy'])
+        dsc = nc.Dataset(cape_file)
+        # Try common short names in case CDS returns variant
+        cape_var = dsc.variables.get('cape') or dsc.variables.get('convective_available_potential_energy')
+        if cape_var is None:
+            # Fallback to first 2D var
+            for k,v in dsc.variables.items():
+                if getattr(v, 'dimensions', None) and len(v.dimensions) >= 2:
+                    cape_var = v; break
+        cape = cape_var[:]  # J/kg
+        lonp = dsc.variables['longitude'][:]; latp = dsc.variables['latitude'][:]
+        order_c = np.argsort(lonp); lon_c = lonp[order_c]
+        cape = cape[:, :, order_c]
 
-        ds.close()
-        plt.close(fig)
-        return buffer
+        lon_sel_c, lat_sel_c, cape_sub = subset_lon_lat(lon_c, latp, cape, lon_w, lon_e, lat_s, lat_n)
+        lon_plot_c = to_center_frame_vec(((lon_sel_c + 180.0) % 360.0) - 180.0, center_deg)
+        lon_plot_c, lat_sel_c, cape_sub = ensure_increasing_axes(lon_plot_c, lat_sel_c, cape_sub)
 
-    finally:
-        if os.path.exists(target):
-            os.remove(target)
+        # Clip 0..7000 and plot with turbo
+        cape_clip = np.clip(cape_sub[0, :, :], 0, 7000)
+        turbo = plt.get_cmap('turbo')
+        cf = ax.contourf(lon_plot_c, lat_sel_c, cape_clip,
+                         levels=np.linspace(0, 7000, 71), cmap=turbo, extend='max',
+                         transform=data_crs_centered)
+
+        # 10 m barbs from earlier
+        add_barbs(ax, lon_plot, lat_sel, u10_sub, v10_sub, params, data_crs_centered)
+        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
+        cb.set_label('Surface-based CAPE (J/kg) — clipped at 7000')
+        title = f'ERA5 SBCAPE (turbo, 0–7000) + 10 m Wind — Valid: {date_str}'
+        dsc.close()
+        os.remove(cape_file)
+
+    elif product in ("500 mb wind and height", "850 mb wind and height"):
+        level = 500 if product.startswith("500") else 850
+        pl_file = cds_retrieve_pl(date_input, api_key, level,
+                                  ['geopotential','u_component_of_wind','v_component_of_wind'])
+        dsp = nc.Dataset(pl_file)
+        z  = dsp.variables['z'][0, 0, ...] / 9.80665  # m
+        z_dm = z / 10.0                               # dam
+        u   = dsp.variables['u'][0, 0, ...]
+        v   = dsp.variables['v'][0, 0, ...]
+        lonp = dsp.variables['longitude'][:]; latp = dsp.variables['latitude'][:]
+
+        order_p = np.argsort(lonp); lon_p = lonp[order_p]
+        z_dm = z_dm[:, order_p]
+        u    = u[:,  order_p]
+        v    = v[:,  order_p]
+
+        # Make as 3D [time, lat, lon] for subsetting convenience
+        z3 = z_dm[np.newaxis, ...]; u3 = u[np.newaxis, ...]; v3 = v[np.newaxis, ...]
+        lon_sel_p, lat_sel_p, z_sub = subset_lon_lat(lon_p, latp, z3, lon_w, lon_e, lat_s, lat_n)
+        _,          _,          u_sub = subset_lon_lat(lon_p, latp, u3, lon_w, lon_e, lat_s, lat_n)
+        _,          _,          v_sub = subset_lon_lat(lon_p, latp, v3, lon_w, lon_e, lat_s, lat_n)
+
+        lon_plot_p = to_center_frame_vec(((lon_sel_p + 180.0) % 360.0) - 180.0, center_deg)
+        lon_plot_p, lat_sel_p, z_sub, u_sub, v_sub = ensure_increasing_axes(
+            lon_plot_p, lat_sel_p, z_sub, u_sub, v_sub
+        )
+
+        # Wind speed (kts)
+        wspd_ms = np.sqrt(u_sub[0]**2 + v_sub[0]**2)
+        wspd_kts = wspd_ms * 1.94384
+
+        if level == 500:
+            cmap_ws = cmap_500_wind()
+            ws_levels = np.arange(20, 141, 1)
+            h_levels  = np.arange(480, 600, 6)
+        else:
+            cmap_ws = cmap_850_wind()
+            ws_levels = np.arange(20, 81, 1)
+            h_levels  = np.arange(120, 180, 3)
+
+        cf = ax.contourf(lon_plot_p, lat_sel_p, wspd_kts, levels=ws_levels, cmap=cmap_ws,
+                         extend='both', transform=data_crs_centered)
+        cs = ax.contour(lon_plot_p, lat_sel_p, z_sub[0], levels=h_levels, colors='black',
+                        linewidths=1.0, transform=data_crs_centered)
+        ax.clabel(cs, inline=True, fontsize=8, colors='black', fmt='%d')
+
+        # Wind barbs (at level winds)
+        LON2, LAT2 = np.meshgrid(lon_plot_p, lat_sel_p)
+        si = params['stride_y']; sj = params['stride_x']
+        ax.barbs(LON2[::si, ::sj], LAT2[::si, ::sj], u_sub[0, ::si, ::sj], v_sub[0, ::si, ::sj],
+                 length=params['barb_len'], transform=data_crs_centered)
+
+        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
+        cb.set_label(f'{level} mb Wind Speed (kt)')
+        title = f'ERA5 {level} mb Wind Speed/Heights — Valid: {date_str}'
+
+        dsp.close(); os.remove(pl_file)
+
+    elif product == "Convective precipitation":
+        cp_file = cds_retrieve_single(date_input, api_key, ['convective_precipitation'])
+        dscp = nc.Dataset(cp_file)
+        # variable short name usually 'cp'
+        cpv = dscp.variables.get('cp') or dscp.variables.get('convective_precipitation')
+        cp = cpv[:]  # meters
+        lonp = dscp.variables['longitude'][:]; latp = dscp.variables['latitude'][:]
+        order_cp = np.argsort(lonp); lon_cp = lonp[order_cp]
+        cp = cp[:, :, order_cp]
+        lon_sel_cp, lat_sel_cp, cp_sub = subset_lon_lat(lon_cp, latp, cp, lon_w, lon_e, lat_s, lat_n)
+        lon_plot_cp = to_center_frame_vec(((lon_sel_cp + 180.0) % 360.0) - 180.0, center_deg)
+        lon_plot_cp, lat_sel_cp, cp_sub = ensure_increasing_axes(lon_plot_cp, lat_sel_cp, cp_sub)
+
+        cp_mm = cp_sub[0] * 1000.0
+        cmap = cmap_cp_white_to_jet()
+        cf = ax.contourf(lon_plot_cp, lat_sel_cp, cp_mm,
+                         levels=np.linspace(0, 10, 51), cmap=cmap, norm=mcolors.Normalize(vmin=0, vmax=10),
+                         extend='max', transform=data_crs_centered)
+        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
+        cb.set_label('Convective Precipitation (mm)')
+        title = f'ERA5 Convective Precipitation — Valid: {date_str}'
+        dscp.close(); os.remove(cp_file)
+
+    elif product == "Cloud top (simulated satellite)":
+        ct_file = cds_retrieve_single(date_input, api_key, ['mean_top_net_long_wave_radiation_flux'])
+        dsct = nc.Dataset(ct_file)
+        # try multiple keys commonly seen
+        mt = (dsct.variables.get('avg_tnlwrf') or
+              dsct.variables.get('mtnlwrf') or
+              dsct.variables.get('tnlwrf') or
+              next((v for k,v in dsct.variables.items() if k not in ('latitude','longitude','time')), None))
+        mtnlwrf = mt[:]
+        lonp = dsct.variables['longitude'][:]; latp = dsct.variables['latitude'][:]
+        order_ct = np.argsort(lonp); lon_ct = lonp[order_ct]
+        mtnlwrf = mtnlwrf[:, :, order_ct]
+        lon_sel_ct, lat_sel_ct, mt_sub = subset_lon_lat(lon_ct, latp, mtnlwrf, lon_w, lon_e, lat_s, lat_n)
+        lon_plot_ct = to_center_frame_vec(((lon_sel_ct + 180.0) % 360.0) - 180.0, center_deg)
+        lon_plot_ct, lat_sel_ct, mt_sub = ensure_increasing_axes(lon_plot_ct, lat_sel_ct, mt_sub)
+
+        # Stefan–Boltzmann to cloud-top temperature (°C)
+        sigma = 5.670367e-8
+        olr = np.abs(mt_sub[0])   # W/m^2
+        t_k = (olr / sigma) ** 0.25
+        t_c = t_k - 273.15
+
+        cmap = rbtop3()
+        cf = ax.contourf(lon_plot_ct, lat_sel_ct, t_c, levels=np.arange(-100, 41, 2),
+                         cmap=cmap, extend='both', transform=data_crs_centered)
+        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
+        cb.set_label('Cloud Top Temperature (°C)')
+        title = f'ERA5 Cloud Top (Simulated IR) — Valid: {date_str}'
+        dsct.close(); os.remove(ct_file)
+
+    else:
+        # Fallback to default dewpoint/MSLP/wind
+        dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
+        cmap = create_custom_dewpoint_cmap()
+        mslp0 = np.ascontiguousarray(mslp_sub[0, :, :])
+        cint = params['cint']
+        mmin = np.floor(np.nanmin(mslp0) / cint) * cint
+        mmax = np.ceil(np.nanmax(mslp0) / cint) * cint
+        levels = np.arange(mmin, mmax + cint, cint)
+        ax.contour(lon_plot, lat_sel, mslp0, levels=levels, colors='black',
+                   linewidths=params['mslp_lw'], transform=data_crs_centered)
+        cf = ax.contourf(lon_plot, lat_sel, dewpoint_f[0, :, :],
+                         levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+                         transform=data_crs_centered)
+        add_barbs(ax, lon_plot, lat_sel, u10_sub, v10_sub, params, data_crs_centered)
+        cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
+        cb.set_label('2m Dewpoint Temperature (°F)')
+        title = f'ERA5 Pressure, Dewpoint, and 10 m Wind — Valid: {date_str}'
+
+    ax.set_title(title + "\nPlotted by Sekai Chandra (@Sekai_WX)")
+
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
+    buffer.seek(0)
+
+    ds.close()
+    plt.close(fig)
+    os.remove(single_file)
+
+    return buffer
 
 # -------------------- Streamlit UI --------------------
 st.title("ERA5 Weather Visualization")
@@ -356,7 +565,7 @@ except KeyError:
     st.error("CDS API key not found in secrets. Please configure your API key.")
     st.stop()
 
-# inputs
+# Date inputs
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     year = st.number_input("Year", min_value=1940, max_value=datetime.now().year, value=2023)
@@ -367,30 +576,44 @@ with col3:
 with col4:
     hour = st.number_input("Hour", min_value=0, max_value=23, value=12)
 
-# region + button
-col5, col6 = st.columns(2)
+# Region + Product + Generate (second row)
+col5, col6, col7 = st.columns([1,1,0.6])
 with col5:
     region_options = []
     for category, regions in REGIONS.items():
         for region_name in regions.keys():
             region_options.append(f"{category}: {region_name}")
     selected_region = st.selectbox("Select Region", region_options)
+
 with col6:
+    product = st.selectbox(
+        "Product",
+        [
+            "Dewpoint, MSLP, and wind barbs",
+            "Surface-based CAPE and wind barbs",
+            "500 mb wind and height",
+            "850 mb wind and height",
+            "Convective precipitation",
+            "Cloud top (simulated satellite)"
+        ],
+        index=0
+    )
+with col7:
     generate_button = st.button("Generate", type="primary", help="Generate the ERA5 visualization")
 
-# run
+# Run
 if generate_button:
     category, region_name = selected_region.split(": ", 1)
     region_coords = REGIONS[category][region_name]
     try:
         with st.spinner("Downloading ERA5 data and generating visualization..."):
-            image_buffer = generate_visualization(year, month, day, hour, region_coords, api_key)
+            image_buffer = generate_visualization(year, month, day, hour, region_coords, api_key, product)
         st.success("Visualization generated successfully!")
-        st.image(image_buffer, caption=f"ERA5 Weather Data for {year}-{month:02d}-{day:02d} {hour:02d}:00 UTC")
+        st.image(image_buffer, caption=f"{product} • {year}-{month:02d}-{day:02d} {hour:02d} UTC • {region_name}")
         st.download_button(
             label="Download Image",
             data=image_buffer,
-            file_name=f"ERA5_{year}{month:02d}{day:02d}{hour:02d}_{region_name.replace(' ', '_')}.png",
+            file_name=f"ERA5_{product.replace(' ','_').replace('/','-')}_{year}{month:02d}{day:02d}{hour:02d}_{region_name.replace(' ', '_')}.png",
             mime="image/png"
         )
     except Exception as e:
