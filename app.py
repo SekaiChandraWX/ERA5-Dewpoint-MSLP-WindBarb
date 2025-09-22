@@ -78,21 +78,16 @@ def shortest_arc_mid(lw, le):
     Given lon_w, lon_e (any range), find the midpoint along the shortest arc on a circle.
     Returns center in degrees (0..360), plus unwrapped w,e in that same frame with w<e.
     """
-    w = mod360(lw)
-    e = mod360(le)
-    # distance going east from w to e
+    w = mod360(lw); e = mod360(le)
     d = (e - w) % 360.0
     if d <= 180.0:
-        # interval is [w, w+d]
         center = (w + d / 2.0) % 360.0
         w_u, e_u = w, w + d
     else:
-        # better to go the other way: [e, e + (360-d)] == arc crossing IDL
         d2 = 360.0 - d
         center = (e + d2 / 2.0) % 360.0
-        # rewrite window as [w+360, e] in unwrapped space so it is increasing
-        w_u, e_u = w, w + 360.0 - d2  # note: e_u > w_u
-    return center, w_u, e_u  # all in 0..360 (unwrapped)
+        w_u, e_u = w, w + 360.0 - d2
+    return center, w_u, e_u
 
 def build_projection_and_extent(lon_w, lon_e, lat_s, lat_n):
     """
@@ -100,19 +95,14 @@ def build_projection_and_extent(lon_w, lon_e, lat_s, lat_n):
     Return (proj_axes, proj_extent_crs, extent_in_that_crs, center_deg)
     """
     s, n = (lat_s, lat_n) if lat_s <= lat_n else (lat_n, lat_s)
+    center, w_u, e_u = shortest_arc_mid(lon_w, lon_e)
 
-    center, w_u, e_u = shortest_arc_mid(lon_w, lon_e)  # 0..360 unwrapped with w_u<e_u
-    # map into a frame centered at "center": that frame uses longitudes Lc = (lon - center)
-    # Cartopy wants extents in degrees east; for PlateCarree(central_longitude=center)
-    # the valid visible range is [center-180, center+180].
     def to_center_frame(lon):
-        # map 0..360 → (-180..180] relative to center
-        x = ((lon - center + 180.0) % 360.0) - 180.0
-        return x
+        # 0..360 → (-180..180] relative to center
+        return ((lon - center + 180.0) % 360.0) - 180.0
 
     w_c = to_center_frame(w_u)
-    e_c = to_center_frame(e_u)
-    # after construction above, w_c < e_c and does NOT cross the seam by design
+    e_c = to_center_frame(e_u)  # w_c < e_c by construction
     proj = ccrs.PlateCarree(central_longitude=float(center))
     extent_crs = ccrs.PlateCarree(central_longitude=float(center))
     extent = [w_c, e_c, s, n]
@@ -120,25 +110,18 @@ def build_projection_and_extent(lon_w, lon_e, lat_s, lat_n):
 
 def subset_lon_lat(lon_360, lat, data3d, lon_w, lon_e, lat_s, lat_n):
     """
-    Subset data to requested box along the shortest arc, return lon in degrees east [-180,180]
-    relative to a standard PlateCarree data CRS (central_longitude=0). No cyclic padding needed.
+    Subset data to requested box along the shortest arc, return lon in degrees east [-180,180)
+    relative to standard PlateCarree data CRS (central_longitude=0).
     """
-    # convert source longitudes 0..360 to [-180,180)
     lon_pm180 = ((lon_360 + 180.0) % 360.0) - 180.0
-
-    # normalize lats
     s, n = (lat_s, lat_n) if lat_s <= lat_n else (lat_n, lat_s)
-
-    # build a comparison axis that unwraps along the shortest path between requested bounds
-    center, w_u, e_u = shortest_arc_mid(lon_w, lon_e)  # 0..360, unwrapped w<e
-    cmp_axis = mod360(lon_pm180)  # move to 0..360 to compare with w_u..e_u
-    # if selection window spans beyond 360 (it can), unwrap cmp accordingly
+    center, w_u, e_u = shortest_arc_mid(lon_w, lon_e)
+    cmp_axis = mod360(lon_pm180)  # 0..360 for comparison
     cmp_unwrapped = np.where(cmp_axis < w_u, cmp_axis + 360.0, cmp_axis)
     idx = np.where((cmp_unwrapped >= w_u) & (cmp_unwrapped <= e_u))[0]
     if idx.size == 0:
         idx = np.arange(lon_pm180.size)
     idx = idx[np.argsort(cmp_unwrapped[idx])]
-
     lon_sel = lon_pm180[idx]
 
     # latitude selection robust to descending arrays
@@ -150,6 +133,18 @@ def subset_lon_lat(lon_360, lat, data3d, lon_w, lon_e, lat_s, lat_n):
 
     sub = data3d[:, lat_mask, :][:, :, idx]
     return lon_sel, lat_sel, sub
+
+def ensure_increasing_axes(lon1d, lat1d, *fields):
+    """Flip arrays so lon & lat are strictly increasing; flip matching axes on fields."""
+    lon_up, lat_up = lon1d, lat1d
+    out = list(fields)
+    if lon_up[0] > lon_up[-1]:
+        lon_up = lon_up[::-1]
+        out = [np.ascontiguousarray(f[..., ::-1]) for f in out]
+    if lat_up[0] > lat_up[-1]:
+        lat_up = lat_up[::-1]
+        out = [np.ascontiguousarray(f[:, ::-1, :]) for f in out]
+    return (lon_up, lat_up, *out)
 
 # -------------------- Zoom-aware density & intervals --------------------
 def auto_plot_params(extent, nx, ny):
@@ -240,9 +235,8 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         lat  = ds.variables['latitude'][:]
 
         # enforce strictly increasing longitudes in 0..360
-        lon_360 = np.asarray(lon0)
-        order = np.argsort(lon_360)
-        lon_360 = lon_360[order]
+        order = np.argsort(lon0)
+        lon_360 = lon0[order]
         mslp = mslp[:, :, order]
         d2m  = d2m[:,  :, order]
         u10  = u10[:,  :, order]
@@ -250,22 +244,27 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 
         lon_w, lon_e, lat_s, lat_n = region_coords
 
-        # build projection centered to the window midpoint (works for IDL or not)
-        proj, extent_crs, extent_centered, center = build_projection_and_extent(lon_w, lon_e, lat_s, lat_n)
+        # projection centered to the window midpoint (IDL-proof)
+        proj, extent_crs, extent_centered, _center = build_projection_and_extent(lon_w, lon_e, lat_s, lat_n)
 
-        # subset to the requested window (no cyclic padding needed)
+        # subset window (no cyclic padding needed)
         lon_sel, lat_sel, mslp_sub = subset_lon_lat(lon_360, lat, mslp, lon_w, lon_e, lat_s, lat_n)
         _,       _,       d2m_sub  = subset_lon_lat(lon_360, lat, d2m,  lon_w, lon_e, lat_s, lat_n)
         _,       _,       u10_sub  = subset_lon_lat(lon_360, lat, u10,  lon_w, lon_e, lat_s, lat_n)
         _,       _,       v10_sub  = subset_lon_lat(lon_360, lat, v10,  lon_w, lon_e, lat_s, lat_n)
 
+        # ensure monotonic increasing axes to avoid contour artifacts
+        lon_sel, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub = ensure_increasing_axes(
+            lon_sel, lat_sel, mslp_sub, d2m_sub, u10_sub, v10_sub
+        )
+
         dewpoint_f = (d2m_sub - 273.15) * 9/5 + 32
         cmap = create_custom_colormap()
         date_str = read_valid_time(ds)
 
-        # data CRS stays standard PlateCarree (central_longitude=0)
-        data_crs = ccrs.PlateCarree()
+        data_crs = ccrs.PlateCarree()  # data in lon/lat (east positive)
 
+        # figure/axes
         fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
         ax.set_extent(extent_centered, crs=extent_crs)
 
@@ -280,10 +279,10 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         except Exception:
             pass
 
-        # grids for barbs
+        # mesh for barbs
         LON2, LAT2 = np.meshgrid(lon_sel, lat_sel)
 
-        # ----- isobars -----
+        # isobars
         mslp0 = mslp_sub[0, :, :]
         cint = params['cint']
         mmin = np.floor(np.nanmin(mslp0) / cint) * cint
@@ -300,14 +299,14 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
-        # ----- filled dewpoint (no cyclic needed because seam is outside) -----
+        # filled dewpoint (no cyclic needed because seam is outside)
         cf = ax.contourf(
             lon_sel, lat_sel, dewpoint_f[0, :, :],
             levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
             transform=data_crs
         )
 
-        # ----- wind barbs (zoom-aware thinning) -----
+        # wind barbs (zoom-aware thinning)
         si = params['stride_y']; sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj],      LAT2[::si, ::sj],
@@ -316,6 +315,7 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
             transform=data_crs
         )
 
+        # colorbar + title
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
         cb.set_label('2m Dewpoint Temperature (°F)')
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
