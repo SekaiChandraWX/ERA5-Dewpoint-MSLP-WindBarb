@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-# from cartopy.util import add_cyclic_point  # not needed anymore
+from cartopy.util import add_cyclic_point
 import os
 import tempfile
 from datetime import datetime
@@ -35,140 +35,130 @@ REGIONS = {
         "West Pacific Basin": [94.9, 183.5, -14.6, 56.1],       # crosses dateline
         "East Pacific Basin": [-161.4, -86.3, 3, 39],
         "Central Pacific Basin": [-188.8, -141.6, 2.4, 41.1],   # crosses dateline
-        "Northern Indian Ocean Basin": [-317, -256.3, -5, 34],  # crosses dateline in raw numbers
+        "Northern Indian Ocean Basin": [-317, -256.3, -5, 34],
         "South Indian Ocean Basin": [32.7, 125.4, -44.8, 3.5],
-        "Australian Basin": [100, 192.7, -50.2, -1.9]           # crosses dateline
+        "Australian Basin": [100, 192.7, -50.2, -1.9]
     }
 }
 
 # -------------------- Color map --------------------
 def create_custom_colormap():
     """Custom colormap for dewpoint temperature."""
-    colors = [
-        (152,109,77),(150,108,76),(148,107,76),(146,106,75),(144,105,75),(142,104,74),
-        (140,102,74),(138,101,73),(136,100,72),(134,99,72),(132,98,71),(130,97,71),
-        (128,96,70),(126,95,70),(124,94,69),(122,93,68),(120,91,68),(118,90,67),
-        (116,89,67),(114,88,66),(113,87,66),(109,85,64),(107,84,64),(105,83,63),
-        (103,82,63),(101,80,62),(99,79,61),(97,78,61),(95,77,60),(93,76,60),
-        (91,75,59),(89,74,59),(87,73,58),(85,72,57),(83,71,57),(81,69,56),
-        (79,68,56),(77,67,55),(75,66,55),(73,65,54),(71,64,54),(69,63,53),
-        (77,67,52),(81,71,56),(86,76,60),(90,80,65),(94,85,69),(99,89,73),
-        (103,94,77),(107,98,81),(112,103,86),(116,107,90),(120,112,94),(125,116,98),
-        (129,121,103),(133,125,107),(138,130,111),(142,134,115),(146,139,119),
-        (151,143,124),(155,148,128),(159,152,132),(164,157,137),(168,161,141),
-        (173,166,145),(189,179,156),(189,179,156),(188,184,161),(193,188,165),
-        (201,197,173),(201,197,173),(210,206,182),(223,220,194),(227,224,198),
-        (231,229,202),(235,233,207),(240,238,211),(244,242,215),(230,245,230),
-        (215,240,215),(200,234,200),(185,229,185),(170,223,170),(155,218,155),
-        (140,213,140),(125,207,125),(110,202,110),(95,196,95),(80,191,80),
-        (65,186,65),(48,174,48),(44,163,44),(39,153,39),(35,142,35),(30,131,30),
-        (26,121,26),(21,110,21),(17,99,17),(12,89,12),(8,78,8),(97,163,175),
-        (88,150,160),(80,137,146),(71,123,131),(62,110,116),(54,97,102),(45,84,87),
-        (36,70,72),(28,57,58),(19,44,43),(102,102,154),(96,94,148),(89,86,142),
-        (83,78,136),(77,70,130),(70,62,124),(64,54,118),(58,46,112),(51,38,106),
-        (45,30,100),(114,64,113),(120,69,115),(125,75,117),(131,80,118),(136,86,120),
-        (142,91,122),(147,97,124),(153,102,125),(158,108,127),(164,113,129)
-    ]
+    colors = [(152, 109, 77), (150, 108, 76), (148, 107, 76), (146, 106, 75), (144, 105, 75), (142, 104, 74),
+              (140, 102, 74), (138, 101, 73), (136, 100, 72), (134, 99, 72), (132, 98, 71), (130, 97, 71),
+              (128, 96, 70), (126, 95, 70), (124, 94, 69), (122, 93, 68), (120, 91, 68), (118, 90, 67), (116, 89, 67),
+              (114, 88, 66), (113, 87, 66), (111, 86, 65), (109, 85, 64), (107, 84, 64), (105, 83, 63), (103, 82, 63),
+              (101, 80, 62), (99, 79, 61), (97, 78, 61), (95, 77, 60), (93, 76, 60), (91, 75, 59), (89, 74, 59),
+              (87, 73, 58), (85, 72, 57), (83, 71, 57), (81, 69, 56), (79, 68, 56), (77, 67, 55), (75, 66, 55),
+              (73, 65, 54), (71, 64, 54), (69, 63, 53), (77, 67, 52), (81, 71, 56), (86, 76, 60), (90, 80, 65),
+              (94, 85, 69), (99, 89, 73), (103, 94, 77), (107, 98, 81), (112, 103, 86), (116, 107, 90), (120, 112, 94),
+              (125, 116, 98), (129, 121, 103), (133, 125, 107), (138, 130, 111), (142, 134, 115), (146, 139, 119),
+              (151, 143, 124), (155, 148, 128), (159, 152, 132), (164, 157, 137), (168, 161, 141), (173, 166, 145),
+              (189, 179, 156), (189, 179, 156), (188, 184, 161), (193, 188, 165), (201, 197, 173), (201, 197, 173),
+              (210, 206, 182), (223, 220, 194), (227, 224, 198), (231, 229, 202), (235, 233, 207), (240, 238, 211),
+              (244, 242, 215), (230, 245, 230), (215, 240, 215), (200, 234, 200), (185, 229, 185), (170, 223, 170),
+              (155, 218, 155), (140, 213, 140), (125, 207, 125), (110, 202, 110), (95, 196, 95), (80, 191, 80),
+              (65, 186, 65), (48, 174, 48), (44, 163, 44), (39, 153, 39), (35, 142, 35), (30, 131, 30), (26, 121, 26),
+              (21, 110, 21), (17, 99, 17), (12, 89, 12), (8, 78, 8), (97, 163, 175), (88, 150, 160), (80, 137, 146),
+              (71, 123, 131), (62, 110, 116), (54, 97, 102), (45, 84, 87), (36, 70, 72), (28, 57, 58), (19, 44, 43),
+              (102, 102, 154), (96, 94, 148), (89, 86, 142), (83, 78, 136), (77, 70, 130), (70, 62, 124), (64, 54, 118),
+              (58, 46, 112), (51, 38, 106), (45, 30, 100), (114, 64, 113), (120, 69, 115), (125, 75, 117),
+              (131, 80, 118), (136, 86, 120), (142, 91, 122), (147, 97, 124), (153, 102, 125), (158, 108, 127),
+              (164, 113, 129)]
     norm_colors = [(r/255, g/255, b/255) for r, g, b in colors]
     return mcolors.LinearSegmentedColormap.from_list('custom_dewpoint', norm_colors, N=256)
 
-# -------------------- Geo + IDL helpers --------------------
-def norm_pm180(lon):
-    """Normalize any lon to (-180, 180]; keep exact -180 at +180."""
-    x = (lon + 180.0) % 360.0 - 180.0
-    return 180.0 if np.isclose(x, -180.0) else x
+# -------------------- IDL-aware geo helpers --------------------
+def crosses_dateline(lon_west, lon_east):
+    """Check if a longitude range crosses the International Date Line."""
+    return lon_west > lon_east
 
-def to_pm180(lon):
-    return norm_pm180(lon)
-
-def crosses_dateline_box(lon_w, lon_e):
-    """Return True if [lon_w, lon_e] crosses the IDL in a -180..180 frame."""
-    w = norm_pm180(lon_w); e = norm_pm180(lon_e)
-    return e <= w  # example: 170E..-150W
-
-def extent_for_central180(ext):
-    """
-    Convert [lon_w, lon_e, lat_s, lat_n] (any range; may cross IDL) into an extent
-    suitable for PlateCarree(central_longitude=180) where west < east.
-    If the box crosses the IDL, we let east exceed +180 by adding 360.
-    """
-    lon_w, lon_e, lat_s, lat_n = ext
-    w = to_pm180(lon_w)
-    e = to_pm180(lon_e)
-    if lat_s > lat_n:
-        lat_s, lat_n = lat_n, lat_s
-    if e <= w:
-        e += 360.0
-    return [w, e, lat_s, lat_n]
-
-def span_from_extent180(ext180):
-    w, e, _, _ = ext180
-    return (e - w) if e >= w else (e + 360.0 - w)
-
-# -------------------- CDS area helpers (subset + stitch) --------------------
-def areas_for_cds(ext):
-    """
-    Convert [lon_w, lon_e, lat_s, lat_n] to one or two CDS 'area' boxes [N,W,S,E] in -180..180.
-    If the request crosses the IDL, return two boxes split at 180.
-    """
-    lon_w, lon_e, lat_s, lat_n = ext
-    north, south = max(lat_s, lat_n), min(lat_s, lat_n)
-    w = norm_pm180(lon_w)
-    e = norm_pm180(lon_e)
-
-    if not crosses_dateline_box(lon_w, lon_e):
-        west, east = min(w, e), max(w, e)
-        return [[north, west, south, east]]
+def normalize_longitude_range(lon_west, lon_east):
+    """Normalize longitude range to handle IDL crossing."""
+    # Convert to 0-360 range first
+    lon_west = lon_west % 360
+    lon_east = lon_east % 360
+    
+    if crosses_dateline(lon_west, lon_east):
+        # For IDL crossing, we need to handle this specially
+        return lon_west, lon_east, True
     else:
-        # Split into [w..180] and [-180..e]
-        west1, east1 = (w, 180.0)
-        west2, east2 = (-180.0, e)
-        return [
-            [north, west1, south, east1],
-            [north, west2, south, east2],
-        ]
+        return lon_west, lon_east, False
 
-def concat_lon_slices(lon_list, arr_list):
-    """
-    Concatenate multiple longitude slices (same lat/time dims) and return sorted by lon.
-    arr_list elements are shaped (time, lat, lon).
-    """
-    lon_all = np.concatenate(lon_list)
-    data_all = np.concatenate(arr_list, axis=-1)
-    order = np.argsort(lon_all)
-    lon_sorted = lon_all[order]
-    data_sorted = data_all[..., order]
-    return lon_sorted, data_sorted
+def get_projection_and_extent(region_coords):
+    """Get appropriate projection and extent for the region."""
+    lon_west, lon_east, lat_south, lat_north = region_coords
+    
+    # Normalize coordinates
+    lon_west_norm, lon_east_norm, crosses_idl = normalize_longitude_range(lon_west, lon_east)
+    
+    if crosses_idl:
+        # Use central longitude of 180 for IDL crossing
+        central_lon = 180.0
+        proj = ccrs.PlateCarree(central_longitude=central_lon)
+        
+        # Convert extent to -180 to 180 range centered on 180
+        extent_west = lon_west_norm - 360 if lon_west_norm > 180 else lon_west_norm
+        extent_east = lon_east_norm if lon_east_norm <= 180 else lon_east_norm
+        
+        # Ensure west < east in the transformed coordinates
+        if extent_west >= extent_east:
+            extent_east += 360
+            
+        extent = [extent_west, extent_east, lat_south, lat_north]
+    else:
+        # Standard case - use central longitude in the middle of the region
+        central_lon = (lon_west + lon_east) / 2
+        if central_lon > 180:
+            central_lon -= 360
+        elif central_lon < -180:
+            central_lon += 360
+            
+        proj = ccrs.PlateCarree(central_longitude=central_lon)
+        
+        # Convert extent to appropriate range
+        extent_west = lon_west if lon_west <= 180 else lon_west - 360
+        extent_east = lon_east if lon_east <= 180 else lon_east - 360
+        
+        extent = [extent_west, extent_east, lat_south, lat_north]
+    
+    return proj, extent, crosses_idl
 
-def drop_duplicate_lons(lon1d, arrays, tol=1e-9):
-    """
-    Remove duplicate/near-duplicate longitudes to keep spacing consistent.
-    arrays: list of arrays with last dim = lon
-    """
-    lon = lon1d.copy()
-    keep = np.ones_like(lon, dtype=bool)
-    keep[1:] = np.abs(np.diff(lon)) > tol
-    lon = lon[keep]
-    out = [a[..., keep] for a in arrays]
-    return lon, out
+def get_data_subset(lon_data, lat_data, region_coords, data_arrays):
+    """Get data subset for the region, handling IDL crossing."""
+    lon_west, lon_east, lat_south, lat_north = region_coords
+    lon_west_norm, lon_east_norm, crosses_idl = normalize_longitude_range(lon_west, lon_east)
+    
+    # Handle latitude (ensure proper order)
+    lat_min, lat_max = min(lat_south, lat_north), max(lat_south, lat_north)
+    lat_mask = (lat_data >= lat_min) & (lat_data <= lat_max)
+    
+    # Handle longitude
+    if crosses_idl:
+        # For IDL crossing, select points west of IDL OR east of IDL
+        lon_mask = (lon_data >= lon_west_norm) | (lon_data <= lon_east_norm)
+    else:
+        # Standard case
+        lon_mask = (lon_data >= lon_west_norm) & (lon_data <= lon_east_norm)
+    
+    # Apply masks
+    lat_subset = lat_data[lat_mask]
+    lon_subset = lon_data[lon_mask]
+    
+    # Subset data arrays
+    data_subset = {}
+    for name, data in data_arrays.items():
+        if data.ndim == 3:  # time, lat, lon
+            data_subset[name] = data[:, lat_mask, :][:, :, lon_mask]
+        elif data.ndim == 2:  # lat, lon
+            data_subset[name] = data[lat_mask, :][:, lon_mask]
+    
+    return lon_subset, lat_subset, data_subset
 
-def make_cyclic(lon1d, field2d):
-    """
-    Manually add a cyclic column without requiring exact equal spacing checks.
-    lon1d: shape (L,)
-    field2d: shape (lat, lon)
-    """
-    diffs = np.diff(lon1d)
-    # Use median step; fallback to first diff if needed
-    step = np.median(diffs) if diffs.size else 360.0
-    lon_ext = np.concatenate([lon1d, [lon1d[-1] + step]])
-    field_ext = np.concatenate([field2d, field2d[:, :1]], axis=1)
-    return lon_ext, field_ext
-
-# -------------------- Auto-thinning (isobars/winds) --------------------
-def auto_plot_params(ext180, nx, ny):
-    lon_span = span_from_extent180(ext180)
-    lat_span = abs(ext180[3] - ext180[2])
+# -------------------- Auto-thinning (softer + denser isobars) --------------------
+def auto_plot_params(extent, nx, ny):
+    lon_span = abs(extent[1] - extent[0])
+    lat_span = abs(extent[3] - extent[2])
     span = max(lon_span, lat_span)
 
     if span >= 120:         # basin/hemisphere
@@ -204,119 +194,99 @@ def read_valid_time(ds):
 
 # -------------------- Main renderer --------------------
 def generate_visualization(year, month, day, hour, region_coords, api_key):
-    """Generate the ERA5 visualization (CDS-subset + IDL robust, no equal-spacing dependency)."""
+    """Generate the ERA5 visualization."""
     date_input = f"{year:04}{month:02}{day:02}{hour:02}"
 
-    # CDS API client
+    # CDS API
     c = cdsapi.Client(url='https://cds.climate.copernicus.eu/api', key=api_key)
     dataset = "reanalysis-era5-single-levels"
+    request = {
+        "product_type": "reanalysis",
+        "variable": [
+            'mean_sea_level_pressure', '2m_dewpoint_temperature', '2m_temperature',
+            '10m_u_component_of_wind', '10m_v_component_of_wind'
+        ],
+        "year": date_input[:4],
+        "month": date_input[4:6],
+        "day": date_input[6:8],
+        "time": date_input[8:] + ":00",
+        "format": "netcdf"
+    }
 
-    # Convert UI region to one or two CDS 'area' boxes (N,W,S,E) in -180..180
-    cds_boxes = areas_for_cds(region_coords)
+    # temp file
+    with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp_file:
+        target = tmp_file.name
 
-    tmp_paths = []
     try:
-        lon_chunks, mslp_chunks, d2m_chunks, u10_chunks, v10_chunks = [], [], [], [], []
-        lat_ref = None
-        date_str = None
+        # retrieve & read
+        c.retrieve(dataset, request, target)
+        ds = nc.Dataset(target)
 
-        for box in cds_boxes:
-            area_n, area_w, area_s, area_e = box
-            request = {
-                "product_type": "reanalysis",
-                "variable": [
-                    'mean_sea_level_pressure', '2m_dewpoint_temperature', '2m_temperature',
-                    '10m_u_component_of_wind', '10m_v_component_of_wind'
-                ],
-                "year": date_input[:4],
-                "month": date_input[4:6],
-                "day": date_input[6:8],
-                "time": date_input[8:] + ":00",
-                "area": [area_n, area_w, area_s, area_e],  # N, W, S, E  (W/E in -180..180)
-                "format": "netcdf"
-            }
+        # variables (ERA5 longitudes usually 0..360, latitude often descending)
+        mslp = ds.variables['msl'][:] / 100.0  # hPa
+        d2m  = ds.variables['d2m'][:]          # K
+        u10  = ds.variables['u10'][:]
+        v10  = ds.variables['v10'][:]
+        lon_data = ds.variables['longitude'][:]
+        lat_data = ds.variables['latitude'][:]
 
-            # temp file per box
-            tmpf = tempfile.NamedTemporaryFile(suffix='.nc', delete=False)
-            tmp_paths.append(tmpf.name)
-            tmpf.close()
+        # Ensure longitude is in 0-360 range and sorted
+        lon_data = np.asarray(lon_data) % 360
+        sort_idx = np.argsort(lon_data)
+        lon_data = lon_data[sort_idx]
+        
+        # Sort all data arrays by longitude
+        mslp = mslp[:, :, sort_idx]
+        d2m = d2m[:, :, sort_idx]
+        u10 = u10[:, :, sort_idx]
+        v10 = v10[:, :, sort_idx]
 
-            c.retrieve(dataset, request, tmp_paths[-1])
-
-            # read and collect
-            ds = nc.Dataset(tmp_paths[-1])
-
-            if date_str is None:
-                date_str = read_valid_time(ds)
-
-            # variables
-            mslp = ds.variables['msl'][:] / 100.0  # hPa
-            d2m  = ds.variables['d2m'][:]          # K
-            u10  = ds.variables['u10'][:]
-            v10  = ds.variables['v10'][:]
-            lat  = ds.variables['latitude'][:]
-            lon  = ds.variables['longitude'][:]
-
-            # ERA5 longitudes are usually 0..360; enforce 0..360 for stitching
-            lon_360 = (np.asarray(lon) % 360.0)
-
-            # Sort by lon ascending for this chunk
-            order = np.argsort(lon_360)
-            lon_360 = lon_360[order]
-            mslp = mslp[:, :, order]
-            d2m  = d2m[:,  :, order]
-            u10  = u10[:,  :, order]
-            v10  = v10[:,  :, order]
-
-            if lat_ref is None:
-                lat_ref = lat
-            else:
-                # sanity: lats must match
-                if lat.shape != lat_ref.shape or not np.allclose(lat, lat_ref):
-                    ds.close()
-                    raise RuntimeError("Latitude arrays differ between split CDS tiles; cannot stitch.")
-
-            lon_chunks.append(lon_360)
-            mslp_chunks.append(mslp)
-            d2m_chunks.append(d2m)
-            u10_chunks.append(u10)
-            v10_chunks.append(v10)
-            ds.close()
-
-        # Stitch across longitude if there were two parts
-        lon_all, mslp_all = concat_lon_slices(lon_chunks, mslp_chunks)
-        _,       d2m_all  = concat_lon_slices(lon_chunks, d2m_chunks)
-        _,       u10_all  = concat_lon_slices(lon_chunks, u10_chunks)
-        _,       v10_all  = concat_lon_slices(lon_chunks, v10_chunks)
-
-        # Drop any accidental duplicate longitudes (rare but can happen on tile edges)
-        lon_all, [mslp_all, d2m_all, u10_all, v10_all] = drop_duplicate_lons(
-            lon_all, [mslp_all, d2m_all, u10_all, v10_all]
+        # Get appropriate projection and extent
+        proj, extent, crosses_idl = get_projection_and_extent(region_coords)
+        
+        # Get data subset for the region
+        data_arrays = {
+            'mslp': mslp,
+            'd2m': d2m,
+            'u10': u10,
+            'v10': v10
+        }
+        
+        lon_subset, lat_subset, data_subset = get_data_subset(
+            lon_data, lat_data, region_coords, data_arrays
         )
 
-        # Build extent for a dateline-centered view (for map set_extent)
-        extent180 = extent_for_central180(region_coords)
+        # Convert longitude to plotting coordinates if needed
+        if crosses_idl:
+            # Convert to -180 to 180 range for plotting
+            lon_plot = np.where(lon_subset > 180, lon_subset - 360, lon_subset)
+            # Sort again if needed
+            if not np.all(lon_plot[:-1] <= lon_plot[1:]):
+                sort_idx = np.argsort(lon_plot)
+                lon_plot = lon_plot[sort_idx]
+                for key in data_subset:
+                    if data_subset[key].ndim == 3:
+                        data_subset[key] = data_subset[key][:, :, sort_idx]
+                    elif data_subset[key].ndim == 2:
+                        data_subset[key] = data_subset[key][:, sort_idx]
+        else:
+            lon_plot = lon_subset
 
-        # Because we already downloaded only the requested box, we can skip extra subsetting.
-        lon_sub = lon_all
-        lat_sub = lat_ref
+        # Convert dewpoint to °F
+        dewpoint_f = (data_subset['d2m'] - 273.15) * 9/5 + 32
 
-        # convert dewpoint to °F
-        dewpoint_f = (d2m_all - 273.15) * 9/5 + 32
+        # colormap and title time
+        cmap = create_custom_colormap()
+        date_str = read_valid_time(ds)
 
-        # ---- Projection setup (IDL-safe) ----
-        proj = ccrs.PlateCarree(central_longitude=180)
-        extent_crs = ccrs.PlateCarree(central_longitude=180)
-        data_crs = ccrs.PlateCarree()  # data lon are 0..360, ok
-
-        # figure/axes
+        # Create figure
         fig, ax = plt.subplots(figsize=(16, 10), subplot_kw={'projection': proj})
-        ax.set_extent(extent180, crs=extent_crs)
+        ax.set_extent(extent, crs=proj)
 
-        # auto-thin based on subset size
-        params = auto_plot_params(extent180, nx=lon_sub.size, ny=lat_sub.size)
+        # Auto-thin based on subset size
+        params = auto_plot_params(extent, nx=lon_plot.size, ny=lat_subset.size)
 
-        # map features
+        # Map features
         ax.set_facecolor('#C0C0C0')
         ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
@@ -325,73 +295,72 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
         except Exception:
             pass
 
-        # Determine if subset crosses/touches the 0/360 seam
-        touches_seam = crosses_dateline_box(region_coords[0], region_coords[1])
+        # Create meshgrid for plotting
+        LON2, LAT2 = np.meshgrid(lon_plot, lat_subset)
 
-        # ----- Filled dewpoint (manual cyclic when touching seam) -----
-        dp_slice = dewpoint_f[0, :, :]  # (lat, lon)
-        lon_for_fill = lon_sub.copy()
-        if touches_seam:
-            lon_for_fill, dp_slice = make_cyclic(lon_for_fill, dp_slice)
-
-        cf = ax.contourf(
-            lon_for_fill, lat_sub, dp_slice,
-            levels=np.linspace(-40, 90, 256),
-            cmap=create_custom_colormap(), extend='both',
-            transform=data_crs
-        )
-
-        # ----- Isobars (manual cyclic when touching seam) -----
-        mslp0 = mslp_all[0, :, :]  # (lat, lon)
-        mmin = np.floor(np.nanmin(mslp0) / params['cint']) * params['cint']
-        mmax = np.ceil(np.nanmax(mslp0) / params['cint']) * params['cint']
-        levels = np.arange(mmin, mmax + params['cint'], params['cint'])
+        # Plot pressure contours
+        mslp_plot = data_subset['mslp'][0, :, :]
+        cint = params['cint']
+        mmin = np.floor(np.nanmin(mslp_plot) / cint) * cint
+        mmax = np.ceil(np.nanmax(mslp_plot) / cint) * cint
+        levels = np.arange(mmin, mmax + cint, cint)
         if levels.size > 60:
             skip = int(np.ceil(levels.size / 60))
             levels = levels[::skip]
 
-        mslp_field = mslp0
-        lon_for_contour = lon_sub.copy()
-        if touches_seam:
-            lon_for_contour, mslp_field = make_cyclic(lon_for_contour, mslp_field)
-
         ax.contour(
-            lon_for_contour, lat_sub, mslp_field,
+            LON2, LAT2, mslp_plot,
             levels=levels, colors='black',
             linewidths=params['mslp_lw'],
-            transform=data_crs
+            transform=ccrs.PlateCarree()
         )
 
-        # wind barbs (no need to cyclic-wrap)
-        si = params['stride_y']; sj = params['stride_x']
-        LON2, LAT2 = np.meshgrid(lon_sub, lat_sub)
+        # Plot filled dewpoint
+        dp_plot = dewpoint_f[0, :, :]
+        
+        # Add cyclic point if needed for IDL crossing
+        if crosses_idl and len(lon_plot) > 1:
+            dp_cyc, lon_cyc = add_cyclic_point(dp_plot, coord=lon_plot)
+            cf = ax.contourf(
+                lon_cyc, lat_subset, dp_cyc,
+                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+                transform=ccrs.PlateCarree()
+            )
+        else:
+            cf = ax.contourf(
+                LON2, LAT2, dp_plot,
+                levels=np.linspace(-40, 90, 256), cmap=cmap, extend='both',
+                transform=ccrs.PlateCarree()
+            )
+
+        # Wind barbs
+        si = params['stride_y']
+        sj = params['stride_x']
         ax.barbs(
             LON2[::si, ::sj], LAT2[::si, ::sj],
-            u10_all[0, ::si, ::sj], v10_all[0, ::si, ::sj],
+            data_subset['u10'][0, ::si, ::sj], data_subset['v10'][0, ::si, ::sj],
             length=params['barb_len'],
-            transform=data_crs
+            transform=ccrs.PlateCarree()
         )
 
-        # colorbar and title
+        # Colorbar and title
         cb = fig.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, shrink=0.75)
         cb.set_label('2m Dewpoint Temperature (°F)')
         ax.set_title(f'ERA5 Pressure, Dewpoint, and Wind\nValid for: {date_str}\nPlotted by Sekai Chandra (@Sekai_WX)')
 
-        # save to buffer
+        # Save to buffer
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
         buffer.seek(0)
 
+        # Cleanup
+        ds.close()
         plt.close(fig)
         return buffer
 
     finally:
-        for p in tmp_paths:
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except Exception:
-                pass
+        if os.path.exists(target):
+            os.remove(target)
 
 # -------------------- Streamlit UI --------------------
 st.title("ERA5 Weather Visualization")
