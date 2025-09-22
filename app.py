@@ -197,7 +197,6 @@ def auto_plot_params(extent, nx, ny):
         'state_lw': state_lw, 'cint': cint
     }
 
-
 # -------------------- Time helper --------------------
 def read_valid_time(ds):
     var = ds.variables.get('valid_time') or ds.variables.get('time')
@@ -285,12 +284,12 @@ def generate_visualization(year, month, day, hour, region_coords, api_key):
 
         params = auto_plot_params(extent_centered, nx=lon_plot.size, ny=lat_sel.size)
 
-        # map features
+        # map features (neutral gray so they don't compete with contours/barbs)
         ax.set_facecolor('#C0C0C0')
-        ax.add_feature(cfeature.COASTLINE, linewidth=params['coast_lw'])
-        ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=params['border_lw'])
+        ax.add_feature(cfeature.COASTLINE, edgecolor='#7f7f7f', linewidth=params['coast_lw'])
+        ax.add_feature(cfeature.BORDERS, edgecolor='#7f7f7f', linestyle=':', linewidth=params['border_lw'])
         try:
-            ax.add_feature(cfeature.STATES, linestyle=':', linewidth=params['state_lw'])
+            ax.add_feature(cfeature.STATES, edgecolor='#9e9e9e', linestyle=':', linewidth=params['state_lw'])
         except Exception:
             pass
 
