@@ -139,44 +139,64 @@ def to_center_frame_vec(lon_pm180, center_deg):
 
 # -------------------- Zoom-aware density & intervals --------------------
 def auto_plot_params(extent, nx, ny):
+    """
+    Choose barb thinning and isobar spacing from the map span.
+    - Larger span  => sparser barbs, slightly wider isobars
+    - Smaller span => denser barbs, tighter isobars
+    """
     w, e, s, n = extent
-    lon_span = e - w
+    lon_span = e - w               # already guaranteed e>w in centered frame
     lat_span = abs(n - s)
     span = max(lon_span, lat_span)
 
+    # Heuristics tuned so CONUS stays detailed, WPAC/EPAC breathe
     if span >= 120:
-        desired_x = 40; barb_len = 5
-        barb_min_stride = 7
-        mslp_lw = 0.9; coast_lw = 0.9; border_lw = 0.7; state_lw = 0.5
-        cint = 2
+        # very wide basin view (e.g., WPAC, global-ish)
+        desired_x = 28            # smaller desired_x -> larger stride -> sparser
+        barb_len = 5
+        barb_min_stride = 9       # ensure sparsity
+        mslp_lw = 0.95
+        coast_lw = 0.9; border_lw = 0.75; state_lw = 0.5
+        cint = 3                  # was 2; slightly wider spacing
     elif span >= 60:
-        desired_x = 55; barb_len = 6
-        barb_min_stride = 7
-        mslp_lw = 1.0; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
+        # large regional (EPAC/Atl basin chunks, wide continents)
+        desired_x = 45
+        barb_len = 6
+        barb_min_stride = 8
+        mslp_lw = 1.0
+        coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
         cint = 2
     elif span >= 30:
-        desired_x = 70; barb_len = 6
-        barb_min_stride = 6
-        mslp_lw = 1.05; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
+        # mesoscale-regional (EU, E/SE Asia subregions, etc.)
+        desired_x = 65
+        barb_len = 6
+        barb_min_stride = 7
+        mslp_lw = 1.05
+        coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
         cint = 3
     else:
-        desired_x = 85; barb_len = 6
+        # tighter zooms (CONUS, states, small-country)
+        desired_x = 85            # dense
+        barb_len = 6
         barb_min_stride = 6
-        mslp_lw = 1.1; coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
+        mslp_lw = 1.1
+        coast_lw = 1.0; border_lw = 0.8; state_lw = 0.6
         cint = 4
 
+    # convert desired density to strides; clamp for sanity
     stride_x = max(1, nx // desired_x)
     stride_y = max(1, ny // int(desired_x / 1.6))
     stride_x = max(stride_x, barb_min_stride)
     stride_y = max(stride_y, barb_min_stride)
-    stride_x = min(stride_x, 12)
-    stride_y = min(stride_y, 12)
+    stride_x = min(stride_x, 14)
+    stride_y = min(stride_y, 14)
 
     return {
         'stride_y': stride_y, 'stride_x': stride_x, 'barb_len': barb_len,
         'mslp_lw': mslp_lw, 'coast_lw': coast_lw, 'border_lw': border_lw,
         'state_lw': state_lw, 'cint': cint
     }
+
 
 # -------------------- Time helper --------------------
 def read_valid_time(ds):
