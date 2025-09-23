@@ -283,7 +283,7 @@ def plot_base_map(ax, params):
     ax.add_feature(cfeature.COASTLINE, edgecolor='#7f7f7f', linewidth=params['coast_lw'])
     ax.add_feature(cfeature.BORDERS, edgecolor='#7f7f7f', linestyle=':', linewidth=params['border_lw'])
     try:
-        ax.add_feature(cfeature.STATES, edgecolor='#9e9e9e', linestyle=':', linewidth=params['state_lw'])
+        ax.add_feature(cfeature.STATES, edgecolor='#5a5a5a', linestyle=':', linewidth=params['state_lw'])
     except Exception:
         pass
 
